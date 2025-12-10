@@ -1,0 +1,24 @@
+{
+  "name": "gemini-puppeteer-api",
+  "version": "1.0.0",
+  "description": "API server for processing text through Gemini using Puppeteer automation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "gemini",
+    "puppeteer",
+    "api",
+    "pdf",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "puppeteer": "^24.26.1"
+  }
+}

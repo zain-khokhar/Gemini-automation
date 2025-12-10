@@ -1,0 +1,8 @@
+node_modules/
+session/
+*.pyc
+__pycache__/
+.env
+*_JSON/
+*.pdf
+.DS_Store

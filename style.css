@@ -1,0 +1,21 @@
+#puppeteer-controls {
+    background-color: #057187;
+    border: 1px solid #ccc;
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    width: fit-content;
+}
+
+#puppeteer-control:hover {
+    background-color: #e0e0e0;
+}
+#content {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}

@@ -1,0 +1,9 @@
+{
+    "gemini_server_url": "http://localhost:3000",
+    "pages_per_batch": 5,
+    "mids_percentage": 95,
+    "retry_attempts": 2,
+    "retry_delay_seconds": 5,
+    "mcqs_per_batch": 10,
+    "request_timeout_seconds": 200
+}
