@@ -21,22 +21,23 @@ class JSONFixer:
             'failures': 0
         }
     
-    def fix_and_parse(self, text: str) -> List[Dict[str, Any]]:
+    def fix_and_parse(self, text: str, expected_type: str = 'mcq') -> List[Dict[str, Any]]:
         """
-        Main entry point - fix malformed JSON and return MCQs
+        Main entry point - fix malformed JSON and return valid items
         
         Args:
             text: Raw response text from Gemini
+            expected_type: 'mcq' or 'short_notes'
             
         Returns:
-            List of MCQ dictionaries
+            List of valid dictionaries
         """
         # Stage 0: Fast path - try direct parse first
         try:
             result = json.loads(text)
             self.stats['fast_path'] += 1
             if isinstance(result, list) and len(result) > 0:
-                return self._validate_mcqs(result)
+                return self._validate_and_filter(result, expected_type)
         except:
             pass
         
@@ -46,7 +47,7 @@ class JSONFixer:
             result = json.loads(cleaned)
             self.stats['quick_fixes'] += 1
             if isinstance(result, list) and len(result) > 0:
-                return self._validate_mcqs(result)
+                return self._validate_and_filter(result, expected_type)
         except Exception as e:
             # Log the error for debugging
             print(f"⚠️  Quick fixes failed: {str(e)}")
@@ -61,7 +62,7 @@ class JSONFixer:
                 self.stats['quick_fixes'] += 1
                 if isinstance(result, list) and len(result) > 0:
                     print(f"✓ Fixed by trimming extra data")
-                    return self._validate_mcqs(result)
+                    return self._validate_and_filter(result, expected_type)
         except:
             pass
         
@@ -71,21 +72,21 @@ class JSONFixer:
             result = json.loads(text)
             self.stats['full_repair'] += 1
             if isinstance(result, list) and len(result) > 0:
-                return self._validate_mcqs(result)
+                return self._validate_and_filter(result, expected_type)
         except Exception as e:
             print(f"⚠️  Structural repair failed: {str(e)}")
         
         # Stage 4: Partial extraction as last resort
         print(f"⚠️  All repair attempts failed, attempting partial extraction...")
-        mcqs = self._extract_partial_mcqs(text)
-        if mcqs and len(mcqs) >= 5:  # Only accept if we got at least 5 MCQs
+        items = self._extract_partial_items(text, expected_type)
+        if items and len(items) >= 1:
             self.stats['partial_extract'] += 1
-            print(f"✓ Extracted {len(mcqs)} MCQs from malformed response")
-            return mcqs
+            print(f"✓ Extracted {len(items)} items from malformed response")
+            return items
         
         # Complete failure - return empty to skip batch
         self.stats['failures'] += 1
-        print(f"❌ Could not extract valid MCQs - SKIPPING THIS BATCH")
+        print(f"❌ Could not extract valid items - SKIPPING THIS BATCH")
         raise Exception("Failed to parse JSON - skipping batch")
     
     def _quick_fixes(self, text: str) -> str:
@@ -208,9 +209,9 @@ class JSONFixer:
         
         return text.strip()
     
-    def _extract_partial_mcqs(self, text: str) -> List[Dict[str, Any]]:
-        """Stage 5: Extract valid MCQ objects from malformed JSON"""
-        mcqs = []
+    def _extract_partial_items(self, text: str, expected_type: str) -> List[Dict[str, Any]]:
+        """Stage 5: Extract valid objects from malformed JSON"""
+        items = []
         
         # Find all object patterns
         pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
@@ -227,93 +228,72 @@ class JSONFixer:
                 
                 obj = json.loads(obj_text)
                 
-                # Check if it looks like an MCQ
-                if self._is_mcq_like(obj):
-                    mcq = self._fix_mcq_structure(obj)
-                    mcqs.append(mcq)
+                # Validate based on type
+                if expected_type == 'mcq':
+                    if self._is_valid_mcq(obj):
+                        items.append(obj)
+                else:
+                    if self._is_valid_short_note(obj):
+                        items.append(obj)
             except:
                 continue
         
-        return mcqs
+        return items
     
-    def _is_mcq_like(self, obj: Dict) -> bool:
-        """Check if object resembles an MCQ"""
-        # Must have at least question or id
-        return 'question' in obj or 'id' in obj
-    
-    def _validate_mcqs(self, data: Any) -> List[Dict[str, Any]]:
-        """Validate and fix MCQ structure"""
+    def _validate_and_filter(self, data: Any, expected_type: str) -> List[Dict[str, Any]]:
+        """Validate and filter items, removing broken ones"""
         if not isinstance(data, list):
-            # Try to wrap in array
             if isinstance(data, dict):
                 data = [data]
             else:
-                return self._create_minimal_mcqs()
+                return []
         
-        # Fix each MCQ
-        fixed_mcqs = []
-        for mcq in data:
-            if isinstance(mcq, dict):
-                fixed_mcq = self._fix_mcq_structure(mcq)
-                fixed_mcqs.append(fixed_mcq)
+        valid_items = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+                
+            if expected_type == 'mcq':
+                if self._is_valid_mcq(item):
+                    valid_items.append(item)
+            else:
+                if self._is_valid_short_note(item):
+                    valid_items.append(item)
         
-        return fixed_mcqs if fixed_mcqs else self._create_minimal_mcqs()
+        if len(valid_items) < len(data):
+            print(f"⚠️  Filtered out {len(data) - len(valid_items)} broken items")
+            
+        return valid_items
     
-    def _fix_mcq_structure(self, mcq: Dict) -> Dict[str, Any]:
-        """Ensure MCQ has all required fields"""
-        required_fields = {
-            'id': 1,
-            'question': 'Question text missing',
-            'options': ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
-            'correct': 'Option 1',
-            'explanation': 'Explanation missing',
-            'difficulty': 'Medium',
-            'importance': 3
-        }
+    def _is_valid_mcq(self, mcq: Dict) -> bool:
+        """Strict validation for MCQ"""
+        # Basic required fields
+        if 'question' not in mcq or not mcq['question']:
+            return False
+        if 'options' not in mcq or not isinstance(mcq['options'], list) or len(mcq['options']) != 4:
+            return False
+        if 'correct' not in mcq or not mcq['correct']:
+            return False
+            
+        # Check correct answer exists in options (normalized)
+        def normalize(s):
+            return str(s).strip()
+            
+        correct = normalize(mcq['correct'])
+        options = [normalize(opt) for opt in mcq['options']]
         
-        # Add missing fields
-        for field, default in required_fields.items():
-            if field not in mcq:
-                mcq[field] = default
-        
-        # Fix options array
-        if not isinstance(mcq['options'], list):
-            mcq['options'] = [str(mcq['options'])]
-        
-        # Ensure exactly 4 options
-        while len(mcq['options']) < 4:
-            mcq['options'].append(f"Option {len(mcq['options']) + 1}")
-        
-        if len(mcq['options']) > 4:
-            mcq['options'] = mcq['options'][:4]
-        
-        # Ensure correct answer is in options
-        if mcq['correct'] not in mcq['options']:
-            mcq['options'][0] = mcq['correct']
-        
-        # Validate difficulty
-        if mcq['difficulty'] not in ['Easy', 'Medium', 'Hard']:
-            mcq['difficulty'] = 'Medium'
-        
-        # Validate importance
-        if not isinstance(mcq['importance'], (int, float)):
-            mcq['importance'] = 3
-        else:
-            mcq['importance'] = max(1, min(5, int(mcq['importance'])))
-        
-        return mcq
-    
-    def _create_minimal_mcqs(self) -> List[Dict[str, Any]]:
-        """Create minimal valid MCQ structure as last resort"""
-        return [{
-            'id': 1,
-            'question': 'Unable to extract question from response',
-            'options': ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
-            'correct': 'Option 1',
-            'explanation': 'Response could not be parsed correctly',
-            'difficulty': 'Medium',
-            'importance': 1
-        }]
+        if correct not in options:
+            return False
+            
+        return True
+
+    def _is_valid_short_note(self, note: Dict) -> bool:
+        """Strict validation for Short Note"""
+        if 'question' not in note or not note['question']:
+            return False
+        if 'answer' not in note or not note['answer']:
+            return False
+        return True
     
     def get_stats(self) -> Dict[str, int]:
         """Get processing statistics"""
@@ -324,17 +304,22 @@ class JSONFixer:
 _fixer = JSONFixer()
 
 
-def fix_and_parse(text: str) -> List[Dict[str, Any]]:
+def fix_and_parse(text: str, expected_type: str = 'mcq') -> List[Dict[str, Any]]:
     """
     Convenience function to fix and parse JSON
     
     Args:
         text: Raw JSON text from Gemini
+        expected_type: 'mcq' or 'short_notes'
         
     Returns:
-        List of MCQ dictionaries
+        List of valid dictionaries
     """
-    return _fixer.fix_and_parse(text)
+    return _fixer.fix_and_parse(text, expected_type)
+
+def fix_json(text: str, expected_type: str = 'mcq') -> List[Dict[str, Any]]:
+    """Alias for fix_and_parse"""
+    return _fixer.fix_and_parse(text, expected_type)
 
 
 def get_stats() -> Dict[str, int]:

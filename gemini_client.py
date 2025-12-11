@@ -245,39 +245,21 @@ class GeminiClient:
             receive_time = time.time() - start_time
             print(f"  📥 Data received from Gemini ({len(raw_response)} chars) in {receive_time:.1f}s")
             
-            # NO JSON CORRECTION - Parse as-is
-            print(f"  📋 Parsing JSON as-is ({len(raw_response)} chars)...")
+            # Parse and validate JSON
+            print(f"  📋 Parsing and validating JSON ({len(raw_response)} chars)...")
             parse_start = time.time()
             
             try:
-                # Clean up markdown code blocks if present, but don't try to fix syntax
-                cleaned_response = raw_response
-                if "```json" in cleaned_response:
-                    cleaned_response = cleaned_response.replace("```json", "").replace("```", "")
-                elif "```" in cleaned_response:
-                    cleaned_response = cleaned_response.replace("```", "")
+                # Use json_fixer to parse, fix syntax if needed, and filter out broken items
+                mcqs = json_fixer.fix_json(raw_response, content_type)
                 
-                cleaned_response = cleaned_response.strip()
-                
-                mcqs = json.loads(cleaned_response)
                 parse_time = time.time() - parse_start
-                print(f"  ✓ JSON parsed successfully in {parse_time*1000:.0f}ms")
-            except json.JSONDecodeError as e:
-                # Don't reject - just log and return empty array
-                parse_time = time.time() - parse_start
-                print(f"  ⚠️  JSON parsing failed at position {e.pos}")
-                print(f"     Error: {str(e)}")
+                print(f"  ✓ JSON parsed and filtered in {parse_time*1000:.0f}ms")
                 
-                # Try one more time with json_fixer as a fallback ONLY if direct parsing fails
-                # This is a safety net to save the data instead of discarding it
-                print(f"     ⚠️ Attempting to recover data using json_fixer...")
-                try:
-                    mcqs = json_fixer.fix_json(raw_response)
-                    print(f"     ✓ Data recovered! ({len(mcqs)} items)")
-                except Exception as fix_error:
-                    print(f"     ❌ Recovery failed: {str(fix_error)}")
-                    print(f"     Returning empty array")
-                    mcqs = []
+            except Exception as e:
+                print(f"  ❌ JSON parsing failed: {str(e)}")
+                print(f"     Returning empty array")
+                mcqs = []
             
             # Check if it's a list
             if not isinstance(mcqs, list):
