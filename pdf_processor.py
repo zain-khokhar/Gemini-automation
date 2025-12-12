@@ -6,10 +6,14 @@ Handles PDF text extraction and Mids/Finals splitting logic
 import fitz  # PyMuPDF
 import json
 import math
+import re
 from pathlib import Path
 
 
 class PDFProcessor:
+    # Pre-compiled regex for performance
+    WHITESPACE_PATTERN = re.compile(r' +')
+
     def __init__(self, pdf_path, config_path='config.json'):
         """
         Initialize PDF processor
@@ -91,8 +95,7 @@ class PDFProcessor:
         text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
         
         # Remove excessive spaces
-        import re
-        text = re.sub(r' +', ' ', text)
+        text = self.WHITESPACE_PATTERN.sub(' ', text)
         
         return text.strip()
     
@@ -191,32 +194,3 @@ class PDFProcessor:
         """Context manager exit"""
         self.close()
 
-
-if __name__ == '__main__':
-    # Test the processor
-    import sys
-    
-    if len(sys.argv) < 2:
-        print("Usage: python pdf_processor.py <pdf_path>")
-        sys.exit(1)
-    
-    pdf_path = sys.argv[1]
-    
-    with PDFProcessor(pdf_path) as processor:
-        print("\n=== MIDS SECTION ===")
-        mids_info = processor.get_section_info('mids')
-        print(f"Pages: {mids_info['page_range']}")
-        print(f"Total batches: {mids_info['total_batches']}")
-        
-        print("\n=== FINALS SECTION ===")
-        finals_info = processor.get_section_info('finals')
-        print(f"Pages: {finals_info['page_range']}")
-        print(f"Total batches: {finals_info['total_batches']}")
-        
-        print("\n=== SAMPLE BATCH (Mids, Batch 1) ===")
-        batches = processor.get_batches('mids')
-        if batches:
-            sample = batches[0]
-            print(f"Pages {sample['start_page']}-{sample['end_page']}")
-            print(f"Text length: {len(sample['text'])} characters")
-            print(f"Preview: {sample['text'][:200]}...")

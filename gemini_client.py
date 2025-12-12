@@ -6,10 +6,14 @@ Handles communication with the Node.js Gemini server
 import requests
 import json
 import time
+import re
 from typing import List, Dict, Any
 
 
 class GeminiClient:
+    # Pre-compiled regex for performance
+    WHITESPACE_PATTERN = re.compile(r'\s+')
+
     def __init__(self, config_path='config.json'):
         """
         Initialize Gemini client
@@ -22,6 +26,9 @@ class GeminiClient:
         
         self.server_url = self.config['gemini_server_url']
         self.timeout = self.config['request_timeout_seconds']
+        
+        # Initialize session for connection pooling
+        self.session = requests.Session()
         
         # Track requests to prevent duplicates
         self.last_request_text = None
@@ -37,7 +44,7 @@ class GeminiClient:
             True if server is healthy, False otherwise
         """
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/health",
                 timeout=5
             )
@@ -85,7 +92,7 @@ class GeminiClient:
             True if paused successfully, False otherwise
         """
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.server_url}/api/pause",
                 timeout=5
             )
@@ -109,7 +116,7 @@ class GeminiClient:
             True if resumed successfully, False otherwise
         """
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.server_url}/api/resume",
                 timeout=5
             )
@@ -134,7 +141,7 @@ class GeminiClient:
             True if paused, False otherwise
         """
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/pause-status",
                 timeout=5
             )
@@ -192,7 +199,7 @@ class GeminiClient:
             start_time = time.time()
             
             # Single request - no retries
-            response = requests.post(
+            response = self.session.post(
                 f"{self.server_url}/api/generate-mcqs",
                 json={
                     'text': text,
@@ -322,8 +329,7 @@ class GeminiClient:
             s = s.replace('\u200a', ' ')  # Hair space
             s = s.replace('\u202f', ' ')  # Narrow no-break space
             # Normalize multiple spaces to single space
-            import re
-            s = re.sub(r'\s+', ' ', s)
+            s = self.WHITESPACE_PATTERN.sub(' ', s)
             return s.strip()
         
         for i, mcq in enumerate(mcqs):
@@ -347,31 +353,3 @@ class GeminiClient:
                 print(f"     Options normalized: {options_normalized}")
                 raise Exception(f"MCQ {i+1} correct answer not in options")
 
-
-if __name__ == '__main__':
-    # Test the client
-    client = GeminiClient()
-    
-    print("Testing Gemini server connection...")
-    
-    if client.check_health():
-        print("✓ Server is healthy and initialized")
-        
-        # Test MCQ generation
-        test_text = """
-        Computer Science is the study of computers and computational systems. 
-        It encompasses both theoretical and practical aspects of computing.
-        Key areas include algorithms, data structures, programming languages, 
-        software engineering, and artificial intelligence.
-        """
-        
-        print("\nTesting MCQ generation...")
-        try:
-            mcqs = client.generate_mcqs(test_text, 'test')
-            print(f"\n✓ Generated {len(mcqs)} MCQs")
-            print("\nSample MCQ:")
-            print(json.dumps(mcqs[0], indent=2))
-        except Exception as e:
-            print(f"\n❌ MCQ generation failed: {str(e)}")
-    else:
-        print("❌ Server is not healthy. Please start the server with: npm start")

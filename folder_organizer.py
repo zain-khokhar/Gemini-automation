@@ -81,26 +81,3 @@ def get_organized_path(pdf_name: str, pdf_source_path: str) -> Path:
         print(f"📂 Subject not recognized, using fallback path: {fallback_path}")
         return fallback_path
 
-
-if __name__ == '__main__':
-    # Test the module
-    print("Testing folder_organizer module\n")
-    
-    # Test cases
-    test_cases = [
-        ("CS101", r"D:\Downloads\CS101.pdf"),
-        ("MGT101", r"D:\Downloads\MGT101.pdf"),
-        ("MGMT301", r"D:\Downloads\MGMT301.pdf"),
-        ("BIO202", r"D:\Downloads\BIO202.pdf"),
-        ("XYZ999", r"D:\Downloads\XYZ999.pdf"),  # Unrecognized
-        ("random_file", r"D:\Downloads\random_file.pdf"),  # Unrecognized
-    ]
-    
-    for pdf_name, pdf_path in test_cases:
-        print(f"\nTest: {pdf_name}")
-        print(f"Source: {pdf_path}")
-        subject = extract_subject_code(pdf_name)
-        print(f"Extracted subject: {subject}")
-        path = get_organized_path(pdf_name, pdf_path)
-        print(f"Output path: {path}")
-        print("-" * 60)

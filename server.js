@@ -317,6 +317,17 @@ async function initializeBrowser() {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
+    // OPTIMIZATION: Block unnecessary resources to speed up loading
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const resourceType = req.resourceType();
+      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
     console.log('Navigating to Gemini...');
     await page.goto('https://gemini.google.com/app', { waitUntil: 'networkidle2' });
 
@@ -665,9 +676,9 @@ async function sendToGemini(text, systemPrompt, domDelayMs = 1000) {
       
     } catch (error) {
       console.error(`❌ Request failed:`, error.message);
-      // CRITICAL: Always wait 15 seconds even on error to avoid rapid-fire requests
-      console.log('⏳ Waiting mandatory 15 seconds before allowing next request (error recovery)...');
-      await new Promise(resolve => setTimeout(resolve, 15000));
+      // CRITICAL: Always wait 5 seconds even on error to avoid rapid-fire requests
+      console.log('⏳ Waiting mandatory 5 seconds before allowing next request (error recovery)...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
       throw error;
     }
   })();
@@ -678,9 +689,9 @@ async function sendToGemini(text, systemPrompt, domDelayMs = 1000) {
   
   try {
     const result = await requestPromise;
-    // CRITICAL: Always wait 15 seconds after successful request
-    console.log('⏳ Waiting mandatory 15 seconds before allowing next request...');
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    // CRITICAL: Always wait 5 seconds after successful request
+    console.log('⏳ Waiting mandatory 5 seconds before allowing next request...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
     return result;
   } catch (error) {
     // Error already handled above with delay

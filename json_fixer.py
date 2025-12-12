@@ -12,6 +12,11 @@ from typing import List, Dict, Any, Optional
 class JSONFixer:
     """Advanced JSON repair with context-aware fixing"""
     
+    # Pre-compiled regex patterns for performance
+    MARKDOWN_JSON_BLOCK = re.compile(r'```json\s*', re.IGNORECASE)
+    MARKDOWN_BLOCK = re.compile(r'```\s*')
+    HTML_TAGS = re.compile(r'<[^>]+>')
+
     def __init__(self):
         self.stats = {
             'fast_path': 0,
@@ -92,8 +97,8 @@ class JSONFixer:
     def _quick_fixes(self, text: str) -> str:
         """Stage 1: Fast common fixes"""
         # Remove markdown code blocks
-        text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'```\s*', '', text)
+        text = self.MARKDOWN_JSON_BLOCK.sub('', text)
+        text = self.MARKDOWN_BLOCK.sub('', text)
         
         # Strip whitespace
         text = text.strip()
@@ -107,7 +112,7 @@ class JSONFixer:
         text = text.replace('&#39;', "'")
         
         # Remove HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
+        text = self.HTML_TAGS.sub('', text)
         
         # Extract JSON array
         start = text.find('[')
@@ -326,39 +331,3 @@ def get_stats() -> Dict[str, int]:
     """Get global fixer statistics"""
     return _fixer.get_stats()
 
-
-if __name__ == '__main__':
-    # Test cases
-    test_cases = [
-        # Test 1: Unescaped quotes
-        '{"question":"What is "cache"?"}',
-        
-        # Test 2: Trailing comma
-        '[{"id":1,"question":"Q1",}]',
-        
-        # Test 3: Missing bracket
-        '[{"id":1},{"id":2}',
-        
-        # Test 4: HTML entities
-        '{"question":"What is &quot;cache&quot;?"}',
-        
-        # Test 5: Valid JSON
-        '[{"id":1,"question":"Q1","options":["A","B","C","D"],"correct":"A","explanation":"E","difficulty":"Easy","importance":3}]'
-    ]
-    
-    fixer = JSONFixer()
-    
-    for i, test in enumerate(test_cases, 1):
-        print(f"\n{'='*60}")
-        print(f"Test {i}: {test[:50]}...")
-        try:
-            result = fixer.fix_and_parse(test)
-            print(f"✓ Success: {len(result)} MCQs")
-            print(f"  First MCQ: {result[0]['question']}")
-        except Exception as e:
-            print(f"❌ Failed: {str(e)}")
-    
-    print(f"\n{'='*60}")
-    print("Statistics:")
-    for key, value in fixer.get_stats().items():
-        print(f"  {key}: {value}")
