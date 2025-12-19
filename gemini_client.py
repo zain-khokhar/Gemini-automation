@@ -264,6 +264,7 @@ class GeminiClient:
                 print(f"  ✓ JSON parsed and filtered in {parse_time*1000:.0f}ms")
                 
             except Exception as e:
+                parse_time = time.time() - parse_start
                 print(f"  ❌ JSON parsing failed: {str(e)}")
                 print(f"     Returning empty array")
                 mcqs = []
