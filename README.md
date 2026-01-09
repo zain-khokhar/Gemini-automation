@@ -113,4 +113,4 @@ This tool uses browser automation to interact with a web service. Please use it 
 
 ---
 
-*Built with ❤️ for students, by students. Happy studying!* 🎓
+*Built with 😈 for students, by students. Happy studying!* 🎓
