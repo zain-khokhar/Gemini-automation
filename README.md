@@ -1,96 +1,116 @@
-# 🎓 PDF to MCQ Generator
-### *Powered by Gemini AI & Python*
+# 🎓 The Ultimate PDF to MCQ Converter
+### *Turn Static Textbooks into Interactive Goldmines*
 
-**Turn your textbooks into interactive quizzes in seconds!** 🚀
-
-This intelligent tool automates the process of extracting knowledge from PDF textbooks and converting it into structured Multiple Choice Questions (MCQs). Whether you're a student preparing for exams or a teacher creating course materials, this tool does the heavy lifting for you.
+![Python](https://img.shields.io/badge/Python-3.x-blue.svg) ![Node.js](https://img.shields.io/badge/Node.js-Automated-green.svg) ![Gemini](https://img.shields.io/badge/AI-Powered-purple.svg)
 
 ---
 
-## ✨ Key Features
+## 👋 Welcome to Smarter Studying
 
-- **🤖 AI-Powered Generation**: Uses Google's Gemini AI to create high-quality, context-aware questions.
-- **📄 Smart PDF Processing**: Automatically splits textbooks into **Mids** and **Finals** sections based on your curriculum needs.
-- **🖥️ User-Friendly Interface**: Clean and modern PyQt5 GUI for easy operation.
-- **💾 Structured JSON Output**: Exports data in a clean, ready-to-use JSON format.
-- **🔄 Auto-Correction**: Includes a robust JSON fixer to ensure AI output is always valid code.
-- **🌐 Browser Automation**: Uses a custom Node.js server to interface directly with Gemini Web, bypassing standard API limitations.
+We've all been there: staring at a 500-page PDF textbook, knowing you need to prepare for exams, but dreading the endless reading. What if you could just feed that book into a machine and get a perfect practice test out the other side?
 
----
+**That's exactly what this tool does.**
 
-## 🛠️ How It Works
-
-1. **The Brain (Node.js Server)**: A local server controls a browser instance that talks to Gemini.
-2. **The Body (Python App)**: The main application reads your PDF, chunks the text, and sends it to the "Brain".
-3. **The Result**: You get a perfectly formatted JSON file with questions, options, and answers.
+It takes your course materials—whether they're for "Mids" or "Finals"—feeds them to Google's advanced **Gemini AI**, and hands you back structured, ready-to-use Multiple Choice Questions. No API keys, no expensive subscriptions, just smart automation.
 
 ---
 
-## 🚀 Getting Started
+## 🌟 What Makes This Special?
+
+This isn't just a script; it's a full-fledged desktop application designed to be resilient and intelligent.
+
+### 🧠 The "Brain" (Node.js + Puppeteer)
+Instead of paying for expensive API credits, we built a custom Node.js server that launches a real browser instance. It logs into Gemini just like you would, creating a persistent, conversational session. This allows for:
+- **Human-like Interaction**: It talks to the AI naturally.
+- **Smart Retries**: If the AI stutters, the system pauses and retries.
+- **Context Awareness**: It keeps track of what you've already processed.
+
+### 🦾 The "Body" (Python + PyQt5)
+The interface is built with PyQt5, offering a clean, modern dashboard. It handles the heavy lifting:
+- **Intelligent Splitting**: It knows your curriculum isn't just 50/50. It automatically calculates the split between Mids and Finals coverage (defaulting to a smart 95% of the first half for Mids).
+- **Chunking Engine**: It breaks down massive PDFs into bite-sized chunks that the AI can digest easily without hallucinating.
+- **Self-Healing Data**: AI isn't perfect. Sometimes it returns broken JSON. Our **`JSON Fixer`** catches these syntax errors and repairs them instantly, ensuring your output file is always valid code.
+
+---
+
+## 🚀 Features at a Glance
+
+- **🤖 Automated AI Conversations**: Leveraging the power of Google Gemini (1.5 Pro/Flash models).
+- **📄 Smart PDF Parsing**: Handles huge textbooks with ease.
+- **⚡ Two-Thread System**: A non-blocking UI that stays responsive while the backend crunches data.
+- **🛡️ Auto-Correction**: A dedicated module that actively monitors and fixes broken data formats.
+- **📊 Real-time Progress**: Visual bars and logs keep you updated on every generated question.
+- **💾 Clean Exports**: Get your data in pristine JSON format, ready for any quiz app or LMS.
+
+---
+
+## 🛠️ How to Set It Up
+
+Getting your personal quiz factory running is easy. You need two main components: the **Brain** (Server) and the **Body** (App).
 
 ### Prerequisites
-- **Node.js** (for the server)
-- **Python 3.x** (for the application)
-- **Google Chrome** (for browser automation)
+1.  **Node.js**: [Download here](https://nodejs.org/) (LTS recommended).
+2.  **Python 3.x**: [Download here](https://www.python.org/).
+3.  **Google Chrome**: You probably already have this!
 
 ### Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone <repo-url>
-   cd gemini-json
-   ```
+1.  **Clone the Magic**
+    ```bash
+    git clone https://github.com/yourusername/gemini-mcq-tool.git
+    cd gemini-mcq-tool
+    ```
 
-2. **Install Server Dependencies**
-   ```bash
-   npm install
-   ```
+2.  **Awaken the Brain (Node.js Dependencies)**
+    ```bash
+    npm install
+    ```
 
-3. **Install Python Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+3.  **Build the Body (Python Dependencies)**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 ---
 
-## 🎮 Usage Guide
+## 🎮 Let's Generate Some Questions!
 
-### Step 1: Wake up the AI 🤖
-Start the local server. This will open a Chrome window.
+### Step 1: Start the Engine
+Open a terminal in the project folder and run:
 ```bash
 npm start
 ```
-> **IMPORTANT:** Log in to your Google Gemini account in the browser window that pops up. Once logged in, keep this terminal running!
+> **👀 Crucial Step:** A Chrome window will open. **Log in to your Google Gemini account** in this window. Once you're logged in, leave the window open and the terminal running. This is your gateway to the AI.
 
-### Step 2: Launch the App 📱
-Open a **new terminal** and run the main interface:
+### Step 2: Launch the Dashboard
+Open a **new** terminal window and run:
 ```bash
 python ui_main.py
 ```
 
-### Step 3: Generate! ⚡
-1. Click **Browse** to select your PDF textbook.
-2. Adjust the **Mids/Finals split** if needed (default is calculated automatically).
-3. Hit **Start Processing** and watch the magic happen!
+### Step 3: Create!
+1.  Click **"Browse"** to select your textbook PDF.
+2.  The app will auto-detect the page count and suggest a split for Mids/Finals.
+3.  Hit **"Start Processing"**.
+4.  Sit back and watch the questions pour in. ☕
 
 ---
 
-## 📂 Project Structure
+## 📂 Inside the Codebase
 
-- `ui_main.py` - The dashboard of the operation.
-- `server.js` - The bridge to Gemini AI.
-- `pdf_processor.py` - The document surgeon (splits and reads PDFs).
-- `json_fixer.py` - The quality control agent (fixes broken JSON).
-- `docs/` - Detailed documentation and guides.
+For the curious developers, here's how we structured the magic:
 
----
-
-## 📝 Notes
-
-- The tool uses your local browser session to interact with Gemini.
-- Ensure you have a stable internet connection.
-- Large PDFs are processed in batches to ensure high-quality results.
+- `ui_main.py`: The command center. Handles the GUI and user interactions.
+- `server.js`: The puppeteer controller. It manages the browser session and dom manipulation to talk to Gemini.
+- `pdf_processor.py`: The surgeon. Safely slices PDFs into text chunks.
+- `json_fixer.py`: The medic. Scans output for syntax errors and patches them on the fly.
+- `premium_requests.json`: Tracks your usage to ensure we stay within safe limits.
 
 ---
 
-*Made with ❤️ for efficient learning.*
+## 📝 A Note on Usage
+This tool uses browser automation to interact with a web service. Please use it responsibly and adhere to Google's terms of service. It is designed for educational and personal use to facilitate learning.
+
+---
+
+*Built with ❤️ for students, by students. Happy studying!* 🎓
