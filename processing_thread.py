@@ -395,8 +395,8 @@ class BatchProcessingThread(QThread):
                                     start_time = time.time()
                                     
                                     # Auto-reset chat based on request count
-                                    # Premium: every 10 requests, Fast: every 20 requests
-                                    reset_threshold = 10 if self.is_premium_model else 20
+                                    # Both Premium and Fast: every 5 requests
+                                    reset_threshold = 5
                                     
                                     if self.request_count > 0 and self.request_count % reset_threshold == 0:
                                         self.log_signal.emit(f"🔄 Auto-resetting chat after {self.request_count} requests ({reset_threshold} request limit)...", "info")
