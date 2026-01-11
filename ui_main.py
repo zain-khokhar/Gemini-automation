@@ -284,26 +284,24 @@ class MCQExtractorUI(QMainWindow):
         pages_layout.addWidget(self.pages_per_request_spinbox)
         settings_layout.addLayout(pages_layout)
         
-        # Content Type Selection (MCQs/Short Notes)
+        # Content Type Selection (MCQs/Short Notes) - Checkboxes for multiple selection
         content_type_layout = QVBoxLayout()
         content_type_label = QLabel("Content Type:")
         content_type_label.setStyleSheet("font-size: 10pt;")
         content_type_layout.addWidget(content_type_label)
         
-        # Create button group for content type
-        self.content_type_button_group = QButtonGroup()
+        # Use QCheckBox instead of QRadioButton for multiple selection
+        from PyQt5.QtWidgets import QCheckBox
         
-        self.mcq_radio = QRadioButton("MCQs")
-        self.mcq_radio.setChecked(True)
-        self.mcq_radio.setStyleSheet("font-size: 10pt;")
-        self.content_type_button_group.addButton(self.mcq_radio, 1)
+        self.mcq_checkbox = QCheckBox("MCQs")
+        self.mcq_checkbox.setChecked(True)
+        self.mcq_checkbox.setStyleSheet("font-size: 10pt;")
         
-        self.short_notes_radio = QRadioButton("Short Notes")
-        self.short_notes_radio.setStyleSheet("font-size: 10pt;")
-        self.content_type_button_group.addButton(self.short_notes_radio, 2)
+        self.short_notes_checkbox = QCheckBox("Short Notes")
+        self.short_notes_checkbox.setStyleSheet("font-size: 10pt;")
         
-        content_type_layout.addWidget(self.mcq_radio)
-        content_type_layout.addWidget(self.short_notes_radio)
+        content_type_layout.addWidget(self.mcq_checkbox)
+        content_type_layout.addWidget(self.short_notes_checkbox)
         settings_layout.addLayout(content_type_layout)
         
         # Model Selection (Premium/Fast)
@@ -563,7 +561,7 @@ class MCQExtractorUI(QMainWindow):
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "Select Folder Containing PDFs",
-            "",
+            r"C:\Users\KLH\Documents\vu-plan-handouts",
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
         
@@ -748,8 +746,27 @@ class MCQExtractorUI(QMainWindow):
             if 'finals' in selected_sections:
                 self.add_log(f"   Finals: Starting from batch {start_finals_batch}", "info")
         
-        # Get content type selection
-        content_type = 'mcq' if self.mcq_radio.isChecked() else 'short_notes'
+        # Get content type selection - now supports multiple types
+        content_types = []
+        if self.mcq_checkbox.isChecked():
+            content_types.append('mcq')
+        if self.short_notes_checkbox.isChecked():
+            content_types.append('short_notes')
+        
+        if not content_types:
+            QMessageBox.warning(self, "No Content Type Selected", 
+                              "Please select at least one content type (MCQs or Short Notes).")
+            self.start_btn.setEnabled(True)
+            self.browse_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.pause_btn.setEnabled(False)
+            return
+        
+        # Log selected content types
+        content_type_str = " + ".join(["MCQs" if ct == 'mcq' else "Short Notes" for ct in content_types])
+        self.add_log(f"📝 Content types: {content_type_str}", "info")
+        if len(content_types) > 1:
+            self.add_log("   (For each PDF: MCQs first, then Short Notes)", "info")
         
         # Create and start batch processing thread with resume parameters and new settings
         self.processing_thread = BatchProcessingThread(
@@ -762,7 +779,7 @@ class MCQExtractorUI(QMainWindow):
             dom_delay_seconds=self.dom_delay_spinbox.value(),
             pages_per_request=self.pages_per_request_spinbox.value(),
             is_premium_model=self.premium_model_radio.isChecked(),
-            content_type=content_type
+            content_types=content_types  # Pass list of content types
         )
         
         # Connect signals

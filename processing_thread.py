@@ -212,7 +212,7 @@ class BatchProcessingThread(QThread):
     
     def __init__(self, pdf_paths, selected_sections=['mids', 'finals'],
                  start_pdf_index=1, start_mids_batch=1, start_finals_batch=1,
-                 delay_seconds=12, dom_delay_seconds=1, pages_per_request=5, is_premium_model=False, content_type='mcq'):
+                 delay_seconds=12, dom_delay_seconds=1, pages_per_request=5, is_premium_model=False, content_types=None):
         super().__init__()
         self.pdf_paths = pdf_paths
         self.selected_sections = selected_sections
@@ -223,7 +223,8 @@ class BatchProcessingThread(QThread):
         self.dom_delay_seconds = dom_delay_seconds
         self.pages_per_request = pages_per_request
         self.is_premium_model = is_premium_model
-        self.content_type = content_type  # 'mcq' or 'short_notes'
+        # Support multiple content types - default to ['mcq'] for backward compatibility
+        self.content_types = content_types if content_types else ['mcq']
         
         # Use user-specified delay for both Premium and Fast models
         self.delay_between_requests = float(delay_seconds)
@@ -324,108 +325,128 @@ class BatchProcessingThread(QThread):
                     # Get output directory from PDF location
                     output_dir = os.path.dirname(pdf_path)
                     
-                    # Initialize JSON manager with organized folder structure
-                    json_manager = JSONManager(pdf_basename, output_dir, pdf_source_path=pdf_path, content_type=self.content_type)
-                    self.current_json_manager = json_manager  # Track for auto-save
-                    
-                    # Process selected sections
-                    for section in self.selected_sections:
+                    # Process each content type for this PDF (MCQs first, then Short Notes)
+                    for content_type in self.content_types:
                         if self.should_stop:
                             break
                         
-                        section_info = processor.get_section_info(section)
-                        self.log_signal.emit(f"📚 Processing {section.upper()} Section", "info")
-                        self.log_signal.emit(f"   Pages: {section_info['page_range']}", "info")
-                        self.log_signal.emit(f"   Total batches: {section_info['total_batches']}", "info")
+                        content_type_label = "MCQs" if content_type == 'mcq' else "Short Notes"
+                        self.log_signal.emit(f"📝 Processing {content_type_label} for {pdf_name}", "info")
                         
-                        batches = processor.get_batches(section, self.pages_per_request)
+                        # Reset chat for new content type
+                        self.log_signal.emit(f"🔄 Starting fresh chat for {content_type_label}...", "info")
+                        if not self.client.reset_chat():
+                            self.log_signal.emit("⚠️  Failed to reset chat, continuing anyway...", "warning")
                         
-                        # Determine start batch for this section
-                        start_batch = 1
-                        if idx == self.start_pdf_index:
-                            # Only apply batch skip on the resume PDF
-                            if section == 'mids':
-                                start_batch = self.start_mids_batch
-                            elif section == 'finals':
-                                start_batch = self.start_finals_batch
+                        # Reset request counter for new content type
+                        self.request_count = 0
                         
-                        for batch_idx, batch in enumerate(batches, start=1):
+                        # Initialize JSON manager with organized folder structure for this content type
+                        json_manager = JSONManager(pdf_basename, output_dir, pdf_source_path=pdf_path, content_type=content_type)
+                        self.current_json_manager = json_manager  # Track for auto-save
+                        
+                        # Process selected sections for this content type
+                        for section in self.selected_sections:
                             if self.should_stop:
                                 break
                             
-                            # Skip batches before start index
-                            if batch_idx < start_batch:
-                                self.log_signal.emit(f"⏭️  Skipping {section} batch {batch_idx}/{len(batches)}", "info")
-                                continue
+                            section_info = processor.get_section_info(section)
+                            self.log_signal.emit(f"📚 Processing {section.upper()} Section ({content_type_label})", "info")
+                            self.log_signal.emit(f"   Pages: {section_info['page_range']}", "info")
+                            self.log_signal.emit(f"   Total batches: {section_info['total_batches']}", "info")
                             
-                            # Check if paused - wait until resumed
-                            while self.is_paused:
+                            batches = processor.get_batches(section, self.pages_per_request)
+                            
+                            # Determine start batch for this section
+                            start_batch = 1
+                            if idx == self.start_pdf_index and content_type == self.content_types[0]:
+                                # Only apply batch skip on the resume PDF and first content type
+                                if section == 'mids':
+                                    start_batch = self.start_mids_batch
+                                elif section == 'finals':
+                                    start_batch = self.start_finals_batch
+                            
+                            for batch_idx, batch in enumerate(batches, start=1):
                                 if self.should_stop:
                                     break
-                                self.status_signal.emit("⏸️  Paused - waiting to resume...")
-                                import time
-                                time.sleep(1)
-                            
-                            # Emit position update with full PDF path and name
-                            pdf_name = os.path.basename(pdf_path)
-                            self.position_signal.emit(pdf_path, idx, pdf_name, section, batch_idx)
-                            
-                            self.status_signal.emit(f"PDF {idx}/{total_pdfs}: {section} batch {batch_idx}/{len(batches)}")
-                            self.log_signal.emit(f"📦 Batch {batch_idx}/{len(batches)} (Pages {batch['start_page']}-{batch['end_page']}, {batch['page_count']} pages)", "info")
-                            
-                            try:
-                                import time
-                                start_time = time.time()
                                 
-                                # Auto-reset chat based on request count
-                                # Premium: every 10 requests, Fast: every 20 requests
-                                reset_threshold = 10 if self.is_premium_model else 20
+                                # Skip batches before start index
+                                if batch_idx < start_batch:
+                                    self.log_signal.emit(f"⏭️  Skipping {section} batch {batch_idx}/{len(batches)}", "info")
+                                    continue
                                 
-                                if self.request_count > 0 and self.request_count % reset_threshold == 0:
-                                    self.log_signal.emit(f"🔄 Auto-resetting chat after {self.request_count} requests ({reset_threshold} request limit)...", "info")
-                                    if not self.client.reset_chat():
-                                        self.log_signal.emit("⚠️  Failed to reset chat, continuing anyway...", "warning")
-                                    else:
-                                        self.log_signal.emit("✓ Chat reset successful", "success")
+                                # Check if paused - wait until resumed
+                                while self.is_paused:
+                                    if self.should_stop:
+                                        break
+                                    self.status_signal.emit("⏸️  Paused - waiting to resume...")
+                                    import time
+                                    time.sleep(1)
                                 
-                                # Pass page count for dynamic MCQ calculation and content type
-                                mcqs = self.client.generate_mcqs(
-                                    batch['text'], 
-                                    section=section,
-                                    pages_count=batch['page_count'],
-                                    content_type=self.content_type,
-                                    dom_delay_seconds=self.dom_delay_seconds
-                                )
+                                # Emit position update with full PDF path and name
+                                pdf_name = os.path.basename(pdf_path)
+                                self.position_signal.emit(pdf_path, idx, pdf_name, section, batch_idx)
                                 
-                                # Log when JSON is returned
-                                self.log_signal.emit("   📥 JSON return triggered from Gemini script", "info")
+                                self.status_signal.emit(f"PDF {idx}/{total_pdfs}: {content_type_label} - {section} batch {batch_idx}/{len(batches)}")
+                                self.log_signal.emit(f"📦 Batch {batch_idx}/{len(batches)} (Pages {batch['start_page']}-{batch['end_page']}, {batch['page_count']} pages)", "info")
                                 
-                                json_manager.add_mcqs(mcqs, section)
-                                
-                                # Increment request counter after successful request
-                                self.request_count += 1
-                                
-                                elapsed_time = time.time() - start_time
-                                self.log_signal.emit(f"   ✓ Generated {len(mcqs)} MCQs in {elapsed_time:.1f}s (Total requests: {self.request_count})", "success")
-                                
-                                # Apply delay between requests (except for last batch)
-                                if batch_idx < len(batches):
-                                    self.log_signal.emit(f"   ⏱️  Waiting {self.delay_between_requests:.1f}s before next request...", "info")
-                                    time.sleep(self.delay_between_requests)
+                                try:
+                                    import time
+                                    start_time = time.time()
                                     
-                            except Exception as e:
-                                self.log_signal.emit(f"   ❌ Failed: {str(e)}", "error")
-                                self.log_signal.emit(f"   ⏭️  Skipping batch...", "warning")
-                                continue
+                                    # Auto-reset chat based on request count
+                                    # Premium: every 10 requests, Fast: every 20 requests
+                                    reset_threshold = 10 if self.is_premium_model else 20
+                                    
+                                    if self.request_count > 0 and self.request_count % reset_threshold == 0:
+                                        self.log_signal.emit(f"🔄 Auto-resetting chat after {self.request_count} requests ({reset_threshold} request limit)...", "info")
+                                        if not self.client.reset_chat():
+                                            self.log_signal.emit("⚠️  Failed to reset chat, continuing anyway...", "warning")
+                                        else:
+                                            self.log_signal.emit("✓ Chat reset successful", "success")
+                                    
+                                    # Pass page count for dynamic MCQ calculation and content type
+                                    mcqs = self.client.generate_mcqs(
+                                        batch['text'], 
+                                        section=section,
+                                        pages_count=batch['page_count'],
+                                        content_type=content_type,
+                                        dom_delay_seconds=self.dom_delay_seconds
+                                    )
+                                    
+                                    # Log when JSON is returned
+                                    self.log_signal.emit("   📥 JSON return triggered from Gemini script", "info")
+                                    
+                                    json_manager.add_mcqs(mcqs, section)
+                                    
+                                    # Increment request counter after successful request
+                                    self.request_count += 1
+                                    
+                                    elapsed_time = time.time() - start_time
+                                    content_label = "MCQs" if content_type == 'mcq' else "notes"
+                                    self.log_signal.emit(f"   ✓ Generated {len(mcqs)} {content_label} in {elapsed_time:.1f}s (Total requests: {self.request_count})", "success")
+                                    
+                                    # Apply delay between requests (except for last batch)
+                                    if batch_idx < len(batches):
+                                        self.log_signal.emit(f"   ⏱️  Waiting {self.delay_between_requests:.1f}s before next request...", "info")
+                                        time.sleep(self.delay_between_requests)
+                                        
+                                except Exception as e:
+                                    self.log_signal.emit(f"   ❌ Failed: {str(e)}", "error")
+                                    self.log_signal.emit(f"   ⏭️  Skipping batch...", "warning")
+                                    continue
+                            
+                            # Save section for this content type
+                            saved_path = json_manager.save_section(section)
+                            if saved_path:
+                                self.log_signal.emit(f"   ✓ Saved to: {saved_path}", "success")
                         
-                        # Save section
-                        saved_path = json_manager.save_section(section)
-                        if saved_path:
-                            self.log_signal.emit(f"   ✓ Saved to: {saved_path}", "success")
+                        # Log completion of this content type for this PDF
+                        self.log_signal.emit(f"✅ {content_type_label} completed for {pdf_name}", "success")
                     
                     processor.close()
                     successful += 1
-                    self.log_signal.emit(f"✅ PDF {idx}/{total_pdfs} completed successfully", "success")
+                    self.log_signal.emit(f"✅ PDF {idx}/{total_pdfs} completed successfully (all content types)", "success")
                     
                 except Exception as e:
                     failed += 1
