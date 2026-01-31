@@ -31,24 +31,32 @@ class JSONManager:
             self.output_base_dir = Path(output_base_dir)
             self.output_folder = self.output_base_dir / f"{pdf_name}_JSON"
         
-        # Create output folder
+        # Create separate subfolders for mids and finals
+        self.mids_folder = self.output_folder / "mids"
+        self.finals_folder = self.output_folder / "finals"
+        
+        # Create output folders
         self.output_folder.mkdir(parents=True, exist_ok=True)
+        self.mids_folder.mkdir(parents=True, exist_ok=True)
+        self.finals_folder.mkdir(parents=True, exist_ok=True)
         
         # File paths - different naming based on content type
         if content_type == 'short_notes':
             # Short notes: "short note {pdf_name}_{section}.json"
-            self.mids_file = self.output_folder / f"short note {pdf_name}_mids.json"
-            self.finals_file = self.output_folder / f"short note {pdf_name}_finals.json"
+            self.mids_file = self.mids_folder / f"short note {pdf_name}_mids.json"
+            self.finals_file = self.finals_folder / f"short note {pdf_name}_finals.json"
         else:
             # MCQs: "{pdf_name}_{section}_mcqs.json"
-            self.mids_file = self.output_folder / f"{pdf_name}_mids_mcqs.json"
-            self.finals_file = self.output_folder / f"{pdf_name}_finals_mcqs.json"
+            self.mids_file = self.mids_folder / f"{pdf_name}_mids_mcqs.json"
+            self.finals_file = self.finals_folder / f"{pdf_name}_finals_mcqs.json"
         
         # MCQ storage
         self.mids_mcqs = []
         self.finals_mcqs = []
         
         print(f"📁 Output folder: {self.output_folder}")
+        print(f"   ├── mids: {self.mids_folder}")
+        print(f"   └── finals: {self.finals_folder}")
     
     def add_mcqs(self, mcqs: List[Dict[str, Any]], section: str):
         """

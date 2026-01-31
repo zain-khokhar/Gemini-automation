@@ -212,7 +212,7 @@ class BatchProcessingThread(QThread):
     
     def __init__(self, pdf_paths, selected_sections=['mids', 'finals'],
                  start_pdf_index=1, start_mids_batch=1, start_finals_batch=1,
-                 delay_seconds=12, dom_delay_seconds=1, pages_per_request=5, is_premium_model=False, content_types=None):
+                 delay_seconds=1, dom_delay_seconds=1, pages_per_request=10, is_premium_model=False, content_types=None):
         super().__init__()
         self.pdf_paths = pdf_paths
         self.selected_sections = selected_sections

@@ -245,7 +245,7 @@ class MCQExtractorUI(QMainWindow):
         self.delay_seconds_spinbox = QSpinBox()
         self.delay_seconds_spinbox.setMinimum(1)
         self.delay_seconds_spinbox.setMaximum(15)
-        self.delay_seconds_spinbox.setValue(12)
+        self.delay_seconds_spinbox.setValue(1)
         self.delay_seconds_spinbox.setMinimumWidth(80)
         self.delay_seconds_spinbox.setMaximumWidth(120)
         self.delay_seconds_spinbox.setStyleSheet("font-size: 10pt;")
@@ -276,7 +276,7 @@ class MCQExtractorUI(QMainWindow):
         self.pages_per_request_spinbox = QSpinBox()
         self.pages_per_request_spinbox.setMinimum(1)
         self.pages_per_request_spinbox.setMaximum(20)
-        self.pages_per_request_spinbox.setValue(5)
+        self.pages_per_request_spinbox.setValue(10)
         self.pages_per_request_spinbox.setMinimumWidth(80)
         self.pages_per_request_spinbox.setMaximumWidth(120)
         self.pages_per_request_spinbox.setStyleSheet("font-size: 10pt;")
@@ -558,10 +558,16 @@ class MCQExtractorUI(QMainWindow):
     
     def browse_pdf(self):
         """Open dialog to select folder containing PDFs"""
+        # Use preferred folder if it exists, else use user's Documents
+        preferred_folder = r"C:\Users\KLH\Documents\vu-plan-handouts"
+        if os.path.exists(preferred_folder):
+            start_folder = preferred_folder
+        else:
+            start_folder = os.path.join(os.path.expanduser("~"), "Documents")
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "Select Folder Containing PDFs",
-            r"C:\Users\KLH\Documents\vu-plan-handouts",
+            start_folder,
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
         
