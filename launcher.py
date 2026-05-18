@@ -50,6 +50,19 @@ def main():
         else:
             # Running as script - use current interpreter
             python_exe = sys.executable
+            
+        # Cleanup any existing zombie node processes on port 3000 before starting
+        print("\n🧹 Cleaning up any existing background processes...")
+        try:
+            result = subprocess.run('netstat -ano | findstr :3000', shell=True, capture_output=True, text=True)
+            for line in result.stdout.strip().split('\n'):
+                if 'LISTENING' in line:
+                    parts = line.strip().split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        subprocess.run(f'taskkill /F /T /PID {pid}', shell=True, capture_output=True)
+        except:
+            pass
         
         # Start Node.js server (hidden window)
         print("\n📦 Starting Node.js server...")
@@ -58,9 +71,9 @@ def main():
         startupinfo.wShowWindow = 0  # SW_HIDE
         
         node_process = subprocess.Popen(
-            "npm start",
+            ["node", "server.js"],
             cwd=script_dir,
-            shell=True,
+            shell=False,
             startupinfo=startupinfo,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         )
@@ -99,6 +112,19 @@ def main():
                     shell=True,
                     capture_output=True
                 )
+                
+                # Backup cleanup just in case
+                try:
+                    result = subprocess.run('netstat -ano | findstr :3000', shell=True, capture_output=True, text=True)
+                    for line in result.stdout.strip().split('\n'):
+                        if 'LISTENING' in line:
+                            parts = line.strip().split()
+                            if len(parts) >= 5:
+                                pid = parts[-1]
+                                subprocess.run(f'taskkill /F /T /PID {pid}', shell=True, capture_output=True)
+                except:
+                    pass
+                    
                 print("✅ Node.js server stopped")
             except:
                 pass

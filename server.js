@@ -305,12 +305,42 @@ async function initializeBrowser() {
 
   try {
     console.log('Launching browser...');
-    browser = await puppeteer.launch({
+    // Detect system Chrome installation
+    let chromePath = null;
+    if (fs.existsSync('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')) {
+      chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    } else if (fs.existsSync('C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe')) {
+      chromePath = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+    } else if (process.env.LOCALAPPDATA) {
+      const userChrome = path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe');
+      if (fs.existsSync(userChrome)) {
+        chromePath = userChrome;
+      }
+    }
+    // Try launching with system Chrome first; on failure fallback to bundled Chromium
+    // Build launch options; include executablePath only if a Chrome binary was found
+    const launchOpts = {
       headless: false,
       userDataDir: './session',
       defaultViewport: null,
-      args: ['--start-maximized', '--disable-blink-features=AutomationControlled']
-    });
+      args: [
+        '--start-maximized',
+        '--disable-blink-features=AutomationControlled',
+        '--no-sandbox',
+        '--disable-setuid-sandbox'
+      ]
+    };
+    if (chromePath) {
+      launchOpts.executablePath = chromePath;
+    }
+    try {
+      browser = await puppeteer.launch(launchOpts);
+    } catch (err) {
+      console.warn('⚠️ Failed to launch with system Chrome (or options), falling back to bundled Chromium:', err.message);
+      // Remove executablePath if it was set and retry
+      delete launchOpts.executablePath;
+      browser = await puppeteer.launch(launchOpts);
+    }
 
     page = await browser.newPage();
     await page.evaluateOnNewDocument(() => {
@@ -846,14 +876,9 @@ app.post('/api/reset-chat', async (req, res) => {
     
     console.log('🔄 Starting fresh Gemini chat...');
     
-    // Use keyboard shortcut: Ctrl + Shift + O
-    await page.keyboard.down('Control');
-    await page.keyboard.down('Shift');
-    await page.keyboard.press('KeyO');
-    await page.keyboard.up('Shift');
-    await page.keyboard.up('Control');
-    
-    // Wait for new chat to load
+    // Navigate to the base URL to start a fresh chat
+    // (Ctrl+Shift+O opens Bookmarks in local Chrome, which detaches the frame)
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(e => console.log('Navigation timeout, continuing...'));
     await delay(2000);
     
     // Clear response cache and active requests

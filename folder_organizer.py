@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 # Main organized output directory
-ORGANIZED_BASE_DIR = r"C:\Users\KLH\Documents\vu-all-JSON"
+ORGANIZED_BASE_DIR = str(Path.home() / "Documents" / "vu-all-JSON")
 
 # Predefined subject codes
 PREDEFINED_SUBJECTS = [

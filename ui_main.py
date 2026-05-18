@@ -22,7 +22,9 @@ class MCQExtractorUI(QMainWindow):
         super().__init__()
         self.processing_thread = None
         self.state_manager = StateManager()
+        self.is_dark_mode = True  # Dark mode by default
         self.init_ui()
+        self.apply_dark_theme()  # Apply dark theme on startup
     
     def init_ui(self):
         """Initialize the user interface"""
@@ -46,6 +48,9 @@ class MCQExtractorUI(QMainWindow):
         main_layout.setSpacing(10)  # Reduced spacing
         main_layout.setContentsMargins(15, 15, 15, 15)  # Reduced margins
         
+        # Title bar with theme toggle
+        title_bar_layout = QHBoxLayout()
+        
         # Title
         title = QLabel("📚 PDF MCQ Extraction Tool")
         title_font = QFont()
@@ -53,13 +58,38 @@ class MCQExtractorUI(QMainWindow):
         title_font.setBold(True)
         title.setFont(title_font)
         title.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title)
+        title_bar_layout.addStretch()
+        title_bar_layout.addWidget(title)
+        title_bar_layout.addStretch()
+        
+        # Theme toggle button
+        self.theme_toggle_btn = QPushButton("☀️ Light")
+        self.theme_toggle_btn.setMinimumWidth(80)
+        self.theme_toggle_btn.setMinimumHeight(30)
+        self.theme_toggle_btn.clicked.connect(self.toggle_theme)
+        self.theme_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #424242;
+                color: white;
+                border: none;
+                border-radius: 15px;
+                font-weight: bold;
+                font-size: 10pt;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #616161;
+            }
+        """)
+        title_bar_layout.addWidget(self.theme_toggle_btn)
+        
+        main_layout.addLayout(title_bar_layout)
         
         # Subtitle
-        subtitle = QLabel("Automatically generate MCQs from PDF textbooks using Gemini AI")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #666; font-size: 10pt;")  # Reduced from 11pt
-        main_layout.addWidget(subtitle)
+        self.subtitle = QLabel("Automatically generate MCQs from PDF textbooks using Gemini AI")
+        self.subtitle.setAlignment(Qt.AlignCenter)
+        self.subtitle.setStyleSheet("color: #aaa; font-size: 10pt;")  # Lighter for dark mode
+        main_layout.addWidget(self.subtitle)
         
         # Separator
         line = QFrame()
@@ -559,7 +589,7 @@ class MCQExtractorUI(QMainWindow):
     def browse_pdf(self):
         """Open dialog to select folder containing PDFs"""
         # Use preferred folder if it exists, else use user's Documents
-        preferred_folder = r"C:\Users\KLH\Documents\vu-plan-handouts"
+        preferred_folder = os.path.join(os.path.expanduser("~"), "Documents", "vu-plan-handouts")
         if os.path.exists(preferred_folder):
             start_folder = preferred_folder
         else:
@@ -965,175 +995,190 @@ class MCQExtractorUI(QMainWindow):
             QMessageBox.information(self, "Success", message)
         else:
             QMessageBox.critical(self, "Error", f"Processing failed:\n{message}")
-
-
-def main():
-    app = QApplication(sys.argv)
     
-    # Set application style
-    app.setStyle('Fusion')
-    
-    # Create and show main window
-    window = MCQExtractorUI()
-    window.show()
-    
-    sys.exit(app.exec_())
-
-
-if __name__ == '__main__':
-    main()
-    def stop_processing(self):
-        """Stop the processing thread"""
-        if self.processing_thread and self.processing_thread.isRunning():
-            self.processing_thread.stop()
-            self.stop_btn.setEnabled(False)
-            self.pause_btn.setEnabled(False)
-    
-    def toggle_pause(self):
-        """Toggle pause/resume state"""
-        if not self.processing_thread or not self.processing_thread.isRunning():
-            return
-        
-        if self.is_paused:
-            # Resume
-            self.processing_thread.resume()
-            self.is_paused = False
-            self.pause_btn.setText("⏸️ Pause")
-            self.pause_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #FF9800;
-                    color: white;
-                    border: none;
-                    border-radius: 5px;
-                    font-weight: bold;
-                    font-size: 12pt;
-                }
-                QPushButton:hover {
-                    background-color: #F57C00;
-                }
-                QPushButton:disabled {
-                    background-color: #ccc;
-                }
-            """)
-            self.add_log("▶️ Processing resumed", "info")
+    def toggle_theme(self):
+        """Toggle between dark and light mode"""
+        self.is_dark_mode = not self.is_dark_mode
+        if self.is_dark_mode:
+            self.apply_dark_theme()
         else:
-            # Pause
-            self.processing_thread.pause()
-            self.is_paused = True
-            self.pause_btn.setText("▶️ Resume")
-            self.pause_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    border: none;
-                    border-radius: 5px;
-                    font-weight: bold;
-                    font-size: 12pt;
-                }
-                QPushButton:hover {
-                    background-color: #45a049;
-                }
-                QPushButton:disabled {
-                    background-color: #ccc;
-                }
-            """)
-            self.add_log("⏸️ Processing paused", "warning")
+            self.apply_light_theme()
     
-    def reset_ui(self):
-        """Reset the UI to initial state"""
-        self.pdf_path_input.clear()
-        self.log_text.clear()
-        self.section_label.setText("N/A")
-        self.batch_label.setText("N/A")
-        self.status_label.setText("Ready")
-        self.progress_bar.setValue(0)
+    def apply_dark_theme(self):
+        """Apply dark theme to the application"""
+        self.theme_toggle_btn.setText("☀️ Light")
+        self.theme_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #424242;
+                color: white;
+                border: none;
+                border-radius: 15px;
+                font-weight: bold;
+                font-size: 10pt;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #616161;
+            }
+        """)
         
-        self.start_btn.setEnabled(True)
-        self.browse_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.pause_btn.setEnabled(False)
-        self.pause_btn.setText("⏸️ Pause")
-        self.is_paused = False
+        dark_style = """
+            QMainWindow, QWidget {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+            }
+            QGroupBox {
+                font-weight: bold;
+                font-size: 10pt;
+                border: 2px solid #444;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                color: #d4d4d4;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #d4d4d4;
+            }
+            QLabel {
+                color: #d4d4d4;
+            }
+            QLineEdit {
+                background-color: #2d2d2d;
+                border: 2px solid #444;
+                border-radius: 5px;
+                padding: 5px;
+                color: #d4d4d4;
+            }
+            QLineEdit:focus {
+                border: 2px solid #4CAF50;
+            }
+            QSpinBox {
+                background-color: #2d2d2d;
+                border: 2px solid #444;
+                border-radius: 5px;
+                padding: 5px;
+                color: #d4d4d4;
+            }
+            QRadioButton, QCheckBox {
+                color: #d4d4d4;
+            }
+            QRadioButton::indicator, QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QScrollArea {
+                background-color: #1e1e1e;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d2d;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #555;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #666;
+            }
+            QFrame[frameShape="4"] {
+                background-color: #444;
+            }
+        """
+        self.setStyleSheet(dark_style)
+        self.subtitle.setStyleSheet("color: #aaa; font-size: 10pt;")
+        self.pdf_total_label.setStyleSheet("color: #aaa;")
         
-        self.add_log("✓ UI reset", "success")
-        self.add_log("ℹ️  Please select a PDF file to begin", "info")
-    
-    def add_log(self, message, level="info"):
-        """Add a log message with color coding"""
-        colors = {
-            "info": "#2196F3",      # Blue
-            "success": "#4CAF50",   # Green
-            "warning": "#FF9800",   # Orange
-            "error": "#f44336"      # Red
-        }
+    def apply_light_theme(self):
+        """Apply light theme to the application"""
+        self.theme_toggle_btn.setText("🌙 Dark")
+        self.theme_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: #333;
+                border: none;
+                border-radius: 15px;
+                font-weight: bold;
+                font-size: 10pt;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #bdbdbd;
+            }
+        """)
         
-        color = colors.get(level, "#d4d4d4")
-        
-        # Format message with HTML
-        html_message = f'<span style="color: {color};">{message}</span>'
-        
-        # Append to log
-        cursor = self.log_text.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        self.log_text.setTextCursor(cursor)
-        self.log_text.insertHtml(html_message + "<br>")
-        
-        # Auto-scroll to bottom
-        scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-    
-    def update_status(self, status):
-        """Update status label"""
-        self.status_label.setText(status)
-    
-    def update_section(self, section):
-        """Update current section label"""
-        self.section_label.setText(section)
-    
-    def update_batch(self, current, total):
-        """Update batch progress"""
-        self.batch_label.setText(f"{current}/{total}")
-        
-        # Update progress bar
-        if total > 0:
-            progress = int((current / total) * 100)
-            self.progress_bar.setValue(progress)
-    
-    def update_current_pdf(self, pdf_name, current, total):
-        """Update current PDF being processed"""
-        self.section_label.setText(f"PDF {current}/{total}")
-        self.batch_label.setText(pdf_name)
-        
-        # Update progress bar for overall batch
-        if total > 0:
-            progress = int((current / total) * 100)
-            self.progress_bar.setValue(progress)
-    
-    def update_position(self, pdf_path, pdf_index, pdf_name, section, batch):
-        """Update last processed position display and save to state"""
-        self.last_pdf_path_label.setText(pdf_path)
-        self.last_pdf_index_label.setText(f"{pdf_index}: {pdf_name}")
-        self.last_section_label.setText(section.upper())
-        self.last_batch_label.setText(str(batch))
-        
-        # Save state to file for persistence
-        self.state_manager.save_state(pdf_path, pdf_index, pdf_name, section, batch)
-    
-    def processing_finished(self, success, message):
-        """Handle processing completion"""
-        # Re-enable controls
-        self.start_btn.setEnabled(True)
-        self.browse_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.pause_btn.setEnabled(False)
-        self.pause_btn.setText("⏸️ Pause")
-        self.is_paused = False
-        
-        if success:
-            self.progress_bar.setValue(100)
-            QMessageBox.information(self, "Success", message)
-        else:
-            QMessageBox.critical(self, "Error", f"Processing failed:\n{message}")
+        light_style = """
+            QMainWindow, QWidget {
+                background-color: #f5f5f5;
+                color: #333;
+            }
+            QGroupBox {
+                font-weight: bold;
+                font-size: 10pt;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                color: #333;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #333;
+            }
+            QLabel {
+                color: #333;
+            }
+            QLineEdit {
+                background-color: white;
+                border: 2px solid #ddd;
+                border-radius: 5px;
+                padding: 5px;
+                color: #333;
+            }
+            QLineEdit:focus {
+                border: 2px solid #4CAF50;
+            }
+            QSpinBox {
+                background-color: white;
+                border: 2px solid #ddd;
+                border-radius: 5px;
+                padding: 5px;
+                color: #333;
+            }
+            QRadioButton, QCheckBox {
+                color: #333;
+            }
+            QScrollArea {
+                background-color: #f5f5f5;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #e0e0e0;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #bdbdbd;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #9e9e9e;
+            }
+            QFrame[frameShape="4"] {
+                background-color: #ddd;
+            }
+        """
+        self.setStyleSheet(light_style)
+        self.subtitle.setStyleSheet("color: #666; font-size: 10pt;")
+        self.pdf_total_label.setStyleSheet("color: #666;")
 
 
 def main():
