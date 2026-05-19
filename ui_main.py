@@ -284,20 +284,7 @@ class MCQExtractorUI(QMainWindow):
         
         settings_layout.addLayout(delay_layout)
         
-        # DOM Stabilization Delay Control
-        dom_delay_layout = QVBoxLayout()
-        dom_delay_label = QLabel("DOM Stabilization Delay (seconds):")
-        dom_delay_label.setStyleSheet("font-size: 10pt;")
-        self.dom_delay_spinbox = QSpinBox()
-        self.dom_delay_spinbox.setMinimum(1)
-        self.dom_delay_spinbox.setMaximum(15)
-        self.dom_delay_spinbox.setValue(1)
-        self.dom_delay_spinbox.setMinimumWidth(80)
-        self.dom_delay_spinbox.setMaximumWidth(120)
-        self.dom_delay_spinbox.setStyleSheet("font-size: 10pt;")
-        dom_delay_layout.addWidget(dom_delay_label)
-        dom_delay_layout.addWidget(self.dom_delay_spinbox)
-        settings_layout.addLayout(dom_delay_layout)
+
         
         # Pages per Request Control
         pages_layout = QVBoxLayout()
@@ -313,6 +300,22 @@ class MCQExtractorUI(QMainWindow):
         pages_layout.addWidget(pages_label)
         pages_layout.addWidget(self.pages_per_request_spinbox)
         settings_layout.addLayout(pages_layout)
+        
+        # Chat Reset Threshold Control
+        reset_layout = QVBoxLayout()
+        reset_label = QLabel("Chat Reset After (requests):")
+        reset_label.setStyleSheet("font-size: 10pt;")
+        self.chat_reset_spinbox = QSpinBox()
+        self.chat_reset_spinbox.setMinimum(1)
+        self.chat_reset_spinbox.setMaximum(50)
+        self.chat_reset_spinbox.setValue(5)
+        self.chat_reset_spinbox.setMinimumWidth(80)
+        self.chat_reset_spinbox.setMaximumWidth(120)
+        self.chat_reset_spinbox.setStyleSheet("font-size: 10pt;")
+        self.chat_reset_spinbox.setToolTip("After this many requests, the Gemini chat will be automatically reset to prevent context overflow")
+        reset_layout.addWidget(reset_label)
+        reset_layout.addWidget(self.chat_reset_spinbox)
+        settings_layout.addLayout(reset_layout)
         
         # Content Type Selection (MCQs/Short Notes) - Checkboxes for multiple selection
         content_type_layout = QVBoxLayout()
@@ -548,6 +551,108 @@ class MCQExtractorUI(QMainWindow):
         control_layout.addWidget(self.stop_btn, 1)
         control_layout.addWidget(self.reset_btn, 1)
         main_layout.addLayout(control_layout)
+        
+        # ============================================================
+        # MANUAL RESPONSE GROUP — Extract button + JSON paste input
+        # ============================================================
+        manual_group = QGroupBox("📋 Manual Response Input")
+        manual_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 10pt; }")
+        manual_layout = QVBoxLayout()
+        manual_layout.setSpacing(8)
+        
+        # Batch info label
+        self.batch_info_label = QLabel("No active batch — start processing first")
+        self.batch_info_label.setStyleSheet("font-size: 10pt; color: #FF9800; font-weight: bold;")
+        self.batch_info_label.setWordWrap(True)
+        manual_layout.addWidget(self.batch_info_label)
+        
+        # Extract button row
+        extract_layout = QHBoxLayout()
+        self.extract_btn = QPushButton("📋 Extract from Chat")
+        self.extract_btn.setMinimumHeight(35)
+        self.extract_btn.setEnabled(False)
+        self.extract_btn.clicked.connect(self.on_extract_clicked)
+        self.extract_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #00BCD4;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #0097A7; }
+            QPushButton:disabled { background-color: #ccc; }
+        """)
+        extract_layout.addWidget(self.extract_btn)
+        
+        # Skip Batch button
+        self.skip_batch_btn = QPushButton("⏭️ Skip Batch")
+        self.skip_batch_btn.setMinimumHeight(35)
+        self.skip_batch_btn.setEnabled(False)
+        self.skip_batch_btn.clicked.connect(self.on_skip_batch_clicked)
+        self.skip_batch_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #F57C00; }
+            QPushButton:disabled { background-color: #ccc; }
+        """)
+        extract_layout.addWidget(self.skip_batch_btn)
+        
+        manual_layout.addLayout(extract_layout)
+        
+        # Separator label
+        or_label = QLabel("— OR paste JSON manually below —")
+        or_label.setAlignment(Qt.AlignCenter)
+        or_label.setStyleSheet("font-size: 9pt; color: #888; font-style: italic;")
+        manual_layout.addWidget(or_label)
+        
+        # JSON paste input
+        self.json_paste_input = QTextEdit()
+        self.json_paste_input.setPlaceholderText("Paste JSON from Gemini chat here...")
+        self.json_paste_input.setMinimumHeight(80)
+        self.json_paste_input.setMaximumHeight(150)
+        self.json_paste_input.setStyleSheet("""
+            QTextEdit {
+                background-color: #2d2d2d;
+                color: #d4d4d4;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 10pt;
+                border: 2px solid #444;
+                border-radius: 5px;
+                padding: 8px;
+            }
+            QTextEdit:focus { border: 2px solid #00BCD4; }
+        """)
+        manual_layout.addWidget(self.json_paste_input)
+        
+        # Submit button
+        self.submit_json_btn = QPushButton("✅ Submit JSON")
+        self.submit_json_btn.setMinimumHeight(35)
+        self.submit_json_btn.setEnabled(False)
+        self.submit_json_btn.clicked.connect(self.on_submit_json_clicked)
+        self.submit_json_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #45a049; }
+            QPushButton:disabled { background-color: #ccc; }
+        """)
+        manual_layout.addWidget(self.submit_json_btn)
+        
+        manual_group.setLayout(manual_layout)
+        main_layout.addWidget(manual_group)
         
         # Logs Group
         logs_group = QGroupBox("📝 Process Logs")
@@ -804,18 +909,18 @@ class MCQExtractorUI(QMainWindow):
         if len(content_types) > 1:
             self.add_log("   (For each PDF: MCQs first, then Short Notes)", "info")
         
-        # Create and start batch processing thread with resume parameters and new settings
+        # Create and start batch processing thread with resume parameters
         self.processing_thread = BatchProcessingThread(
-            selected_pdfs,  # Use filtered PDF list
+            selected_pdfs,
             selected_sections,
             start_pdf_index,
             start_mids_batch,
             start_finals_batch,
             delay_seconds=self.delay_seconds_spinbox.value(),
-            dom_delay_seconds=self.dom_delay_spinbox.value(),
             pages_per_request=self.pages_per_request_spinbox.value(),
             is_premium_model=self.premium_model_radio.isChecked(),
-            content_types=content_types  # Pass list of content types
+            content_types=content_types,
+            chat_reset_threshold=self.chat_reset_spinbox.value()
         )
         
         # Connect signals
@@ -824,6 +929,8 @@ class MCQExtractorUI(QMainWindow):
         self.processing_thread.current_pdf_signal.connect(self.update_current_pdf)
         self.processing_thread.position_signal.connect(self.update_position)
         self.processing_thread.finished_signal.connect(self.processing_finished)
+        self.processing_thread.awaiting_input_signal.connect(self.on_awaiting_input)
+        self.processing_thread.json_invalid_signal.connect(self.on_json_invalid)
         
         # Start thread
         self.processing_thread.start()
@@ -864,7 +971,6 @@ class MCQExtractorUI(QMainWindow):
             """)
             
             # Disable settings during active processing
-            self.dom_delay_spinbox.setEnabled(False)
             self.pages_per_request_spinbox.setEnabled(False)
             self.delay_seconds_spinbox.setEnabled(False)
             
@@ -894,11 +1000,11 @@ class MCQExtractorUI(QMainWindow):
             
             # Enable settings for modification while paused
             self.delay_seconds_spinbox.setEnabled(True)
-            self.dom_delay_spinbox.setEnabled(True)
             self.pages_per_request_spinbox.setEnabled(True)
+            self.chat_reset_spinbox.setEnabled(True)
             
             self.add_log("⏸️ Processing paused", "warning")
-            self.add_log("⚙️ Settings unlocked - you can modify delay, DOM time, and pages per request", "info")
+            self.add_log("⚙️ Settings unlocked - you can modify delay, pages per request, and chat reset threshold", "info")
     
     def reset_ui(self):
         """Reset the UI to initial state"""
@@ -915,6 +1021,7 @@ class MCQExtractorUI(QMainWindow):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸️ Pause")
         self.is_paused = False
+        self.skip_batch_btn.setEnabled(False)
         
         self.add_log("✓ UI reset", "success")
         self.add_log("ℹ️  Please select a PDF file to begin", "info")
@@ -980,15 +1087,106 @@ class MCQExtractorUI(QMainWindow):
         # Save state to file for persistence
         self.state_manager.save_state(pdf_path, pdf_index, pdf_name, section, batch)
     
+    # ============================================================
+    # MANUAL RESPONSE HANDLERS
+    # ============================================================
+    
+    def on_awaiting_input(self, pdf_name, section, batch_idx, total_batches, content_type_label):
+        """Called when processing thread is waiting for user to submit JSON"""
+        self.batch_info_label.setText(
+            f"⏳ Waiting: {pdf_name} — {section.upper()} — Batch {batch_idx}/{total_batches} ({content_type_label})"
+        )
+        self.batch_info_label.setStyleSheet("font-size: 10pt; color: #00BCD4; font-weight: bold;")
+        self.extract_btn.setEnabled(True)
+        self.submit_json_btn.setEnabled(True)
+        self.skip_batch_btn.setEnabled(True)
+        
+    def on_json_invalid(self, invalid_json):
+        """Called when JSON is invalid and sent to Gemini for fixing"""
+        self.batch_info_label.setText("❌ Invalid JSON — Gemini will fix it. Paste corrected response below.")
+        self.batch_info_label.setStyleSheet("font-size: 10pt; color: #f44336; font-weight: bold;")
+        self.json_paste_input.setPlainText(invalid_json)
+        self.extract_btn.setEnabled(True)
+        self.submit_json_btn.setEnabled(True)
+        self.skip_batch_btn.setEnabled(True)
+    
+    def on_skip_batch_clicked(self):
+        """Skip the current batch if JSON is invalid or user wants to move on"""
+        if not self.processing_thread or not self.processing_thread.isRunning():
+            return
+            
+        reply = QMessageBox.question(
+            self, "Skip Batch?", 
+            "Are you sure you want to skip this batch? The current data will be discarded.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.processing_thread.skip_current_batch()
+            self.extract_btn.setEnabled(False)
+            self.submit_json_btn.setEnabled(False)
+            self.skip_batch_btn.setEnabled(False)
+            self.batch_info_label.setText("⏭️ Skipping batch...")
+            self.batch_info_label.setStyleSheet("font-size: 10pt; color: #FF9800; font-weight: bold;")
+    
+    def on_extract_clicked(self):
+        """Extract JSON from Gemini chat via server API"""
+        if not self.processing_thread or not self.processing_thread.isRunning():
+            QMessageBox.warning(self, "Not Processing", "No active batch to extract for.")
+            return
+        
+        try:
+            from gemini_client import GeminiClient
+            client = GeminiClient()
+            raw_text = client.extract_response()
+            
+            if raw_text:
+                self.add_log(f"📋 Extracted {len(raw_text)} chars from Gemini", "success")
+                self.processing_thread.submit_json(raw_text, source='extract')
+                self.extract_btn.setEnabled(False)
+                self.submit_json_btn.setEnabled(False)
+                self.skip_batch_btn.setEnabled(False)
+                self.batch_info_label.setText("✅ JSON extracted — processing...")
+                self.batch_info_label.setStyleSheet("font-size: 10pt; color: #4CAF50; font-weight: bold;")
+            else:
+                self.add_log("⚠️ No response extracted", "warning")
+        except Exception as e:
+            self.add_log(f"❌ Extract failed: {str(e)}", "error")
+            QMessageBox.warning(self, "Extract Failed", str(e))
+    
+    def on_submit_json_clicked(self):
+        """Submit manually pasted JSON"""
+        if not self.processing_thread or not self.processing_thread.isRunning():
+            QMessageBox.warning(self, "Not Processing", "No active batch to submit for.")
+            return
+        
+        json_text = self.json_paste_input.toPlainText().strip()
+        if not json_text:
+            QMessageBox.warning(self, "Empty Input", "Please paste JSON first.")
+            return
+        
+        self.add_log(f"📋 Manual JSON submitted ({len(json_text)} chars)", "info")
+        self.processing_thread.submit_json(json_text, source='manual')
+        self.json_paste_input.clear()
+        self.extract_btn.setEnabled(False)
+        self.submit_json_btn.setEnabled(False)
+        self.skip_batch_btn.setEnabled(False)
+        self.batch_info_label.setText("✅ JSON submitted — processing...")
+        self.batch_info_label.setStyleSheet("font-size: 10pt; color: #4CAF50; font-weight: bold;")
+
     def processing_finished(self, success, message):
         """Handle processing completion"""
-        # Re-enable controls
         self.start_btn.setEnabled(True)
         self.browse_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸️ Pause")
         self.is_paused = False
+        self.extract_btn.setEnabled(False)
+        self.submit_json_btn.setEnabled(False)
+        self.skip_batch_btn.setEnabled(False)
+        self.batch_info_label.setText("No active batch")
+        self.batch_info_label.setStyleSheet("font-size: 10pt; color: #FF9800; font-weight: bold;")
         
         if success:
             self.progress_bar.setValue(100)

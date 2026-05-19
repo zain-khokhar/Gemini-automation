@@ -20,27 +20,22 @@ let browser = null;
 let page = null;
 let isInitialized = false;
 
-// Response cache to prevent duplicate requests
-const responseCache = new Map();
-const CACHE_EXPIRY_MS = 300000; // 5 minutes
+// Chat session tracking
+let chatSessionId = 0;
+let isPageReady = false;
 
-// Active request tracking
-let activeRequest = null;
-let activeRequestText = null;
-
-// Pause state management
+// Pause state
 let isPaused = false;
+let pauseTimestamp = null;
 
-// Request counter file for Premium model tracking
+// Premium request counter file
 const REQUEST_COUNTER_FILE = path.join(__dirname, 'premium_requests.json');
 
-// Load request counter
 function loadRequestCounter() {
   try {
     if (fs.existsSync(REQUEST_COUNTER_FILE)) {
       const data = JSON.parse(fs.readFileSync(REQUEST_COUNTER_FILE, 'utf8'));
       const today = new Date().toDateString();
-      // Reset counter if it's a new day
       if (data.date !== today) {
         return { date: today, count: 0 };
       }
@@ -52,7 +47,6 @@ function loadRequestCounter() {
   return { date: new Date().toDateString(), count: 0 };
 }
 
-// Save request counter
 function saveRequestCounter(counter) {
   try {
     fs.writeFileSync(REQUEST_COUNTER_FILE, JSON.stringify(counter, null, 2));
@@ -61,7 +55,6 @@ function saveRequestCounter(counter) {
   }
 }
 
-// Increment request counter
 function incrementRequestCounter() {
   const counter = loadRequestCounter();
   counter.count++;
@@ -70,15 +63,15 @@ function incrementRequestCounter() {
   return counter;
 }
 
-let pauseTimestamp = null;
+// Helper
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-// Rate limiting system
-let requestCount = 0;
-let lastCooldownTime = null;
-const MAX_REQUESTS_BEFORE_COOLDOWN = 50;
-const COOLDOWN_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+// ============================================================
+// SYSTEM PROMPTS
+// ============================================================
 
-// System prompt generator for MCQ generation - ENFORCES PERFECT VALID JSON OUTPUT
 function generateSystemPrompt(expectedMcqs = 10) {
   return `You are an expert MCQ generator for Virtual University students preparing for mids and finals examinations.
   You need to think deeply on every request and not respond too quickly, because we need quality output.
@@ -124,8 +117,6 @@ MCQ GENERATION STRATEGY (PRIORITY ORDER):
    - Ensure every MCQ covers a distinct concept or angle
    - If a concept is important, ask about it differently, do not duplicate the question
 
-
-
 ABSOLUTE JSON REQUIREMENTS:
 
 1. START AND END: First character MUST be [ and last character MUST be ]
@@ -133,14 +124,6 @@ ABSOLUTE JSON REQUIREMENTS:
 3. NO MARKDOWN: NO code blocks, NO backticks, NO formatting
 4. VALID SYNTAX: Every comma, quote, bracket must be perfect
 5. NO TRAILING COMMAS: Never put comma after last item in array/object
-
-COMMON MISTAKES THAT BREAK JSON (DO NOT DO THESE):
-
-- Extra bracket at end: [{"id":1}] ]  <- WRONG! Extra ]
-- Trailing comma: [{"id":1,}]  <- WRONG! Comma before }
-- Missing comma: [{"id":1}{"id":2}]  <- WRONG! Need comma between objects
-- Unescaped quotes: {"q":"What is "cache"?"}  <- WRONG! Must escape: \\\\"cache\\\\"
-- Text after JSON: [{"id":1}] Here are the MCQs  <- WRONG! Nothing after ]
 
 CORRECT JSON FORMAT:
 
@@ -156,17 +139,6 @@ REQUIRED FIELDS (ALL MANDATORY):
 - difficulty: string ("Easy", "Medium", or "Hard" ONLY)
 - importance: number (1-5, where 5 = highest recurrence in past papers)
 - source: string ("VU Past Paper YYYY" or "AI Generated" or "VU Syllabus")
-
-QUALITY REQUIREMENTS:
-
-6. Prioritize questions from past papers over AI-generated ones
-7. Ensure high predictability for student success
-8. ABSOLUTELY NO REPEATED QUESTIONS - Each MCQ must be unique
-
-BEFORE SENDING YOUR RESPONSE:mbiguous
-5. Explanation should be concise and educational
-6. Prioritize questions from past papers over AI-generated ones
-7. Ensure high predictability for student success
 
 BEFORE SENDING YOUR RESPONSE:
 
@@ -186,7 +158,6 @@ TEXT TO ANALYZE:
 `;
 }
 
-// System prompt generator for SHORT NOTES - ENFORCES PERFECT VALID JSON OUTPUT
 function generateShortNotesPrompt(expectedNotes = 10) {
   return `You are an expert note generator for Virtual University students preparing for mids and finals examinations.
 You need to think deeply on every request and not respond too quickly, because we need quality output.
@@ -262,15 +233,6 @@ FORBIDDEN - DO NOT INCLUDE:
 - NO long paragraphs or detailed explanations
 - ONLY "question" and "answer" fields
 
-QUALITY REQUIREMENTS:
-
-1. 90% CONCEPTUAL QUESTIONS: Focus on logic, mechanisms, and reasons (How/Why).
-2. 10% DEFINITIONS: Only for very complex terms.
-3. COMPREHENSIVE ANSWERS: Explain clearly to remove all doubts (40-60 words).
-4. ACCURACY: Ensure technical correctness.
-5. NO REPETITION: Each note must cover a unique concept.
-6. CLARITY: Use simple, direct language for easy understanding.
-
 BEFORE SENDING YOUR RESPONSE:
 
 - Check: Does it start with [ ?
@@ -290,13 +252,10 @@ TEXT TO ANALYZE:
 `;
 }
 
+// ============================================================
+// BROWSER INITIALIZATION
+// ============================================================
 
-// Helper function to replace deprecated page.waitForTimeout
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Initialize browser and login
 async function initializeBrowser() {
   if (isInitialized) {
     console.log('Browser already initialized');
@@ -305,20 +264,6 @@ async function initializeBrowser() {
 
   try {
     console.log('Launching browser...');
-    // Detect system Chrome installation
-    let chromePath = null;
-    if (fs.existsSync('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')) {
-      chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    } else if (fs.existsSync('C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe')) {
-      chromePath = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
-    } else if (process.env.LOCALAPPDATA) {
-      const userChrome = path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe');
-      if (fs.existsSync(userChrome)) {
-        chromePath = userChrome;
-      }
-    }
-    // Try launching with system Chrome first; on failure fallback to bundled Chromium
-    // Build launch options; include executablePath only if a Chrome binary was found
     const launchOpts = {
       headless: false,
       userDataDir: './session',
@@ -330,16 +275,21 @@ async function initializeBrowser() {
         '--disable-setuid-sandbox'
       ]
     };
-    if (chromePath) {
-      launchOpts.executablePath = chromePath;
-    }
     try {
       browser = await puppeteer.launch(launchOpts);
-    } catch (err) {
-      console.warn('⚠️ Failed to launch with system Chrome (or options), falling back to bundled Chromium:', err.message);
-      // Remove executablePath if it was set and retry
-      delete launchOpts.executablePath;
-      browser = await puppeteer.launch(launchOpts);
+    } catch (launchErr) {
+      console.warn('⚠️ Puppeteer launch failed:', launchErr.message);
+      console.log('🔄 Deleting corrupt "./session" directory and retrying...');
+      try {
+        if (fs.existsSync('./session')) {
+          fs.rmSync('./session', { recursive: true, force: true });
+        }
+        browser = await puppeteer.launch(launchOpts);
+        console.log('✓ Recovered with fresh session');
+      } catch (retryErr) {
+        console.error('❌ Recovery failed:', retryErr.message);
+        throw retryErr;
+      }
     }
 
     page = await browser.newPage();
@@ -347,11 +297,11 @@ async function initializeBrowser() {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
-    // OPTIMIZATION: Block unnecessary resources to speed up loading
+    // Block unnecessary resources
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const resourceType = req.resourceType();
-      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+      if (['image', 'font', 'media'].includes(resourceType)) {
         req.abort();
       } else {
         req.continue();
@@ -377,6 +327,8 @@ async function initializeBrowser() {
     }
 
     isInitialized = true;
+    isPageReady = true;
+    chatSessionId = 1;
     console.log('✓ Browser initialized successfully\n');
     return true;
   } catch (error) {
@@ -385,477 +337,67 @@ async function initializeBrowser() {
   }
 }
 
-// Extract response from Gemini - ADVANCED ROBUST DETECTION
-async function waitForResponse(timeoutMs = 180000, domDelayMs = 1000) {
-  try {
-    const startTime = Date.now();
-    console.log('🔍 Waiting for Gemini to finish generating...');
-    
-    // Wait for response to start appearing
-    await page.waitForSelector('message-content', { visible: true, timeout: 120000 });
-    await delay(800); // Increased from 300ms - ensure content starts properly
-    
-    // ADVANCED: Use MutationObserver to detect when DOM stops changing
-    const generationComplete = await page.evaluate((maxWaitMs) => {
-      return new Promise((resolve, reject) => {
-        const startTime = Date.now();
-        let lastMutationTime = Date.now();
-        let stableCount = 0;
-        const STABLE_CHECKS_NEEDED = 5; // Increased from 3 - more conservative
-        const STABLE_DURATION_MS = 1500; // Increased from 800ms - safer detection
-        
-        // Get the last message container
-        const messages = document.querySelectorAll('message-content');
-        if (messages.length === 0) {
-          reject(new Error('No message-content found'));
-          return;
-        }
-        const lastMessage = messages[messages.length - 1];
-        
-        // Multiple completion signal checkers
-        const checkCompletionSignals = () => {
-          const signals = {
-            copyButton: false,
-            stopButton: false,
-            textStable: false,
-            cursorGone: false
-          };
-          
-          // Signal 1: Copy button appears (strong indicator)
-          const copyButton = lastMessage.querySelector('button[aria-label*="Copy"], button[data-tooltip*="Copy"], button[title*="Copy"]');
-          signals.copyButton = copyButton && copyButton.offsetParent !== null;
-          
-          // Signal 2: Stop button disappears
-          const stopButton = document.querySelector('button[aria-label*="Stop"], button[aria-label*="stop"]');
-          signals.stopButton = !stopButton || stopButton.offsetParent === null;
-          
-          // Signal 3: Typing cursor/indicator gone
-          const typingIndicator = lastMessage.querySelector('.typing-indicator, .cursor, [class*="typing"]');
-          signals.cursorGone = !typingIndicator || typingIndicator.offsetParent === null;
-          
-          // Signal 4: Text content stable
-          const timeSinceLastMutation = Date.now() - lastMutationTime;
-          signals.textStable = timeSinceLastMutation >= STABLE_DURATION_MS;
-          
-          return signals;
-        };
-        
-        // Set up MutationObserver to track DOM changes
-        const observer = new MutationObserver((mutations) => {
-          // Filter out irrelevant mutations (like class changes on unrelated elements)
-          const relevantMutation = mutations.some(mutation => {
-            // Check if mutation is in the message content area
-            if (mutation.type === 'childList' || mutation.type === 'characterData') {
-              return true;
-            }
-            // Ignore pure class/attribute changes unless it's on the message itself
-            return false;
-          });
-          
-          if (relevantMutation) {
-            lastMutationTime = Date.now();
-            stableCount = 0;
-          }
-        });
-        
-        // Observe the last message for changes
-        observer.observe(lastMessage, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-          attributes: false // Ignore attribute changes to reduce noise
-        });
-        
-        // Polling loop to check completion signals
-        const checkInterval = setInterval(() => {
-          const elapsed = Date.now() - startTime;
-          
-          // Timeout check
-          if (elapsed >= maxWaitMs) {
-            clearInterval(checkInterval);
-            observer.disconnect();
-            console.log('⚠️ Timeout reached in MutationObserver');
-            resolve({ completed: false, reason: 'timeout' });
-            return;
-          }
-          
-          const signals = checkCompletionSignals();
-          const timeSinceLastMutation = Date.now() - lastMutationTime;
-          
-          // Log progress every 5 seconds
-          if (elapsed % 5000 < 500) {
-            console.log(`  Monitoring... (${Math.floor(elapsed/1000)}s) - Copy:${signals.copyButton} Stop:${signals.stopButton} Stable:${signals.textStable} (${Math.floor(timeSinceLastMutation/1000)}s)`);
-          }
-          
-          // Check if generation is complete based on multiple signals
-          // Strategy: Either copy button appears OR (stop button gone AND text stable)
-          const isComplete = signals.copyButton || 
-                           (signals.stopButton && signals.textStable && signals.cursorGone);
-          
-          if (isComplete) {
-            stableCount++;
-            
-            if (stableCount >= STABLE_CHECKS_NEEDED) {
-              clearInterval(checkInterval);
-              observer.disconnect();
-              console.log(`✓ Generation detected as complete! Signals: Copy=${signals.copyButton}, Stop=${signals.stopButton}, Stable=${signals.textStable}, Cursor=${signals.cursorGone}`);
-              resolve({ completed: true, signals });
-              return;
-            }
-          } else {
-            stableCount = 0;
-          }
-        }, 500); // Check every 500ms
-      });
-    }, timeoutMs);
-    
-    if (!generationComplete.completed) {
-      console.log('⚠️ Generation may not be complete, but proceeding to extract response...');
-    } else {
-      const detectionTime = Date.now() - startTime;
-      console.log(`✓ Generation confirmed complete in ${detectionTime}ms`);
-    }
-    
-    // Small delay to ensure final content is rendered (user-configurable)
-    console.log(`⏳ DOM stable delay triggered (${domDelayMs}ms)...`);
-    await delay(domDelayMs);
-    
-    // Now extract the final response
-    console.log('📤 JSON return triggered from frontend (Gemini script)...');
-    const extractStart = Date.now();
-    
-    const messages = await page.$$('message-content');
-    if (messages.length === 0) {
-      throw new Error('No messages found after waiting');
-    }
-    
-    // Get the last message (most recent response)
-    const lastMessage = messages[messages.length - 1];
-    
-    // Try multiple methods to extract text (handle both plain text and code blocks)
-    const text = await lastMessage.evaluate(el => {
-      // Method 1: Try to get text from code block first (if Gemini uses code blocks despite instructions)
-      const codeBlock = el.querySelector('pre code, code[class*="language-"], .code-block code');
-      if (codeBlock && codeBlock.textContent.trim().length > 50) {
-        return codeBlock.textContent.trim();
-      }
-      
-      // Method 2: Try markdown container
-      const markdown = el.querySelector('.markdown');
-      if (markdown && markdown.textContent.trim().length > 50) {
-        return markdown.textContent.trim();
-      }
-      
-      // Method 3: Get all text content
-      return el.textContent.trim();
-    });
-    
-    const extractTime = Date.now() - extractStart;
-    console.log(`✓ Extraction completed in ${extractTime}ms`);
-    
-    if (!text || text.length < 50) {
-      throw new Error(`Response too short or empty (${text.length} characters)`);
-    }
-    
-    const totalTime = Date.now() - startTime;
-    console.log(`✅ Response ready (${totalTime}ms total, ${text.length} characters)`);
-    console.log(`   └─ Breakdown: Detection + Extraction = ${totalTime}ms`);
-    return text;
-    
-  } catch (error) {
-    console.error('❌ Error in waitForResponse:', error.message);
-    
-    // Try one more time to extract any available response
-    try {
-      console.log('🔄 Attempting recovery...');
-      await delay(2000);
-      const messages = await page.$$('message-content');
-      if (messages.length > 0) {
-        const lastMessage = messages[messages.length - 1];
-        const text = await lastMessage.evaluate(el => {
-          // Try code block first
-          const codeBlock = el.querySelector('pre code, code[class*="language-"], .code-block code');
-          if (codeBlock && codeBlock.textContent.trim().length > 50) {
-            return codeBlock.textContent.trim();
-          }
-          // Then markdown
-          const markdown = el.querySelector('.markdown');
-          return markdown ? markdown.textContent.trim() : el.textContent.trim();
-        });
-        if (text && text.length > 50) {
-          console.log(`✓ Recovered response (${text.length} characters)`);
-          return text;
-        }
-      }
-    } catch (retryError) {
-      console.error('❌ Recovery failed:', retryError.message);
-    }
-    
-    throw new Error(`Failed to get response: ${error.message}`);
-  }
-}
+// ============================================================
+// PAGE READINESS CHECK
+// ============================================================
 
-// Generate cache key for text
-function generateCacheKey(text) {
-  const crypto = require('crypto');
-  return crypto.createHash('md5').update(text).digest('hex');
-}
-
-// Clean expired cache entries
-function cleanCache() {
-  const now = Date.now();
-  for (const [key, value] of responseCache.entries()) {
-    if (now - value.timestamp > CACHE_EXPIRY_MS) {
-      responseCache.delete(key);
-    }
-  }
-}
-
-// Send query to Gemini - SINGLE ATTEMPT, RETURN RAW RESPONSE
-async function sendToGemini(text, systemPrompt, domDelayMs = 1000) {
+async function verifyPageReady(maxWaitMs = 15000) {
   const inputSel = 'textarea, div[role="textbox"]';
-  
-  // Check cache first
-  const cacheKey = generateCacheKey(text);
-  cleanCache();
-  
-  if (responseCache.has(cacheKey)) {
-    const cached = responseCache.get(cacheKey);
-    console.log('✓ Using cached response');
-    return cached.response;
-  }
-  
-  // Check if there's already an active request for this text
-  if (activeRequest && activeRequestText === cacheKey) {
-    console.log('⚠️  Request already in progress for this text, waiting...');
-    try {
-      const result = await activeRequest;
-      return result;
-    } catch (error) {
-      console.log('⚠️  Active request failed');
-      activeRequest = null;
-      activeRequestText = null;
-      throw error;
-    }
-  }
-  
-  // Create new request promise - SINGLE ATTEMPT
-  const requestPromise = (async () => {
-    try {
-      console.log('\n🚀 Sending query to Gemini (single attempt)...');
-      
-      // Wait for input field
-      await page.waitForSelector(inputSel, { visible: true, timeout: 15000 });
-      await page.bringToFront();
-      await delay(500);
-      
-      // Clear any existing text
-      await page.click(inputSel);
-      await page.keyboard.down('Control');
-      await page.keyboard.press('A');
-      await page.keyboard.up('Control');
-      await page.keyboard.press('Backspace');
-      await delay(500);
-      
-      // Prepare the full prompt with dynamic system prompt
-      const fullPrompt = systemPrompt + '\n\n' + text;
-      
-      // CRITICAL: Use evaluate to paste text directly instead of typing
-      await page.evaluate((selector, textContent) => {
-        const element = document.querySelector(selector);
-        if (element) {
-          if (element.tagName === 'TEXTAREA') {
-            element.value = textContent;
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-          } else if (element.getAttribute('role') === 'textbox') {
-            element.textContent = textContent;
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-        }
-      }, inputSel, fullPrompt);
-      
-      console.log(`✓ Text pasted successfully (${fullPrompt.length} characters)`);
-      await delay(1000);
-      
-      // Send the query
-      await page.keyboard.press('Enter');
-      console.log('✓ Query sent, waiting for response...');
-      
-      // Wait for and extract response with timeout protection
-      const response = await Promise.race([
-        waitForResponse(180000, domDelayMs),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Overall timeout exceeded')), 180000)
-        )
-      ]);
-      
-      if (!response || response.length < 50) {
-        throw new Error(`Invalid response (too short: ${response?.length || 0} characters)`);
-      }
-      
-      console.log(`✓ Raw response received (${response.length} characters)`);
-      console.log('📤 Returning raw response to Python for auto-correction...');
-      
-      // Cache the raw response
-      responseCache.set(cacheKey, {
-        response: response,
-        timestamp: Date.now()
-      });
-      
-      return response;
-      
-    } catch (error) {
-      console.error(`❌ Request failed:`, error.message);
-      // CRITICAL: Always wait 5 seconds even on error to avoid rapid-fire requests
-      console.log('⏳ Waiting mandatory 5 seconds before allowing next request (error recovery)...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      throw error;
-    }
-  })();
-  
-  // Track active request
-  activeRequest = requestPromise;
-  activeRequestText = cacheKey;
-  
+  const startTime = Date.now();
+
+  console.log('🔍 Verifying page readiness...');
+
   try {
-    const result = await requestPromise;
-    // CRITICAL: Always wait 5 seconds after successful request
-    console.log('⏳ Waiting mandatory 5 seconds before allowing next request...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    return result;
-  } catch (error) {
-    // Error already handled above with delay
-    throw error;
-  } finally {
-    // Clear active request tracking
-    if (activeRequestText === cacheKey) {
-      activeRequest = null;
-      activeRequestText = null;
-    }
-  }
-}
+    await page.waitForSelector(inputSel, { visible: true, timeout: maxWaitMs });
 
-// Clean JSON response (remove markdown, code blocks, fix common issues)
+    const isInteractive = await page.evaluate((selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.pointerEvents !== 'none' &&
+        !el.disabled
+      );
+    }, inputSel);
 
-function cleanJsonResponse(text) {
-  console.log(`🧹 Cleaning JSON response (${text.length} characters)...`);
-  
-  // Remove markdown code blocks
-  text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
-  
-  // Remove any text before the first [ or {
-  const jsonStart = Math.min(
-    text.indexOf('[') !== -1 ? text.indexOf('[') : Infinity,
-    text.indexOf('{') !== -1 ? text.indexOf('{') : Infinity
-  );
-  
-  if (jsonStart !== Infinity) {
-    text = text.substring(jsonStart);
-  }
-  
-  // Remove any text after the last ] or }
-  const jsonEnd = Math.max(text.lastIndexOf(']'), text.lastIndexOf('}'));
-  if (jsonEnd !== -1) {
-    text = text.substring(0, jsonEnd + 1);
-  }
-  
-  // Fix common HTML entities that break JSON
-  text = text.replace(/&quot;/g, '\\"');
-  text = text.replace(/&amp;/g, '&');
-  text = text.replace(/&lt;/g, '<');
-  text = text.replace(/&gt;/g, '>');
-  text = text.replace(/&apos;/g, "'");
-  
-  // Remove HTML tags (they shouldn't be there, but just in case)
-  text = text.replace(/<[^>]+>/g, '');
-  
-  const cleaned = text.trim();
-  console.log(`✓ Cleaned to ${cleaned.length} characters`);
-  
-  // Try to parse and provide helpful error message if it fails
-  try {
-    JSON.parse(cleaned);
-    console.log('✓ JSON validation passed');
-  } catch (error) {
-    console.error('❌ JSON validation failed:', error.message);
-    
-    // Show context around the error position
-    if (error.message.includes('position')) {
-      const match = error.message.match(/position (\d+)/);
-      if (match) {
-        const pos = parseInt(match[1]);
-        const start = Math.max(0, pos - 50);
-        const end = Math.min(cleaned.length, pos + 50);
-        const context = cleaned.substring(start, end);
-        console.error(`Context around error (position ${pos}):`);
-        console.error(`...${context}...`);
-        console.error(' '.repeat(pos - start + 3) + '^');
+    if (!isInteractive) {
+      await delay(2000);
+      const retryInteractive = await page.evaluate((selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && !el.disabled;
+      }, inputSel);
+
+      if (!retryInteractive) {
+        throw new Error('Input field found but not interactive after retry');
       }
     }
-    
-    throw error;
-  }
-  
-  return cleaned;
-}
 
-// Validate MCQ structure
-function validateMCQs(mcqs) {
-  if (!Array.isArray(mcqs)) {
-    throw new Error('Response is not an array');
-  }
-  
-  const requiredFields = ['id', 'question', 'options', 'correct', 'explanation', 'difficulty', 'importance'];
-  
-  for (let i = 0; i < mcqs.length; i++) {
-    const mcq = mcqs[i];
-    
-    // Check all required fields exist
-    for (const field of requiredFields) {
-      if (!(field in mcq)) {
-        throw new Error(`MCQ ${i} missing field: ${field}`);
-      }
-    }
-    
-    // Validate options is array of 4
-    if (!Array.isArray(mcq.options) || mcq.options.length !== 4) {
-      throw new Error(`MCQ ${i} must have exactly 4 options`);
-    }
-    
-    // Validate correct answer is in options
-    if (!mcq.options.includes(mcq.correct)) {
-      throw new Error(`MCQ ${i} correct answer not in options`);
-    }
-  }
-  
-  return true;
-}
+    const elapsed = Date.now() - startTime;
+    console.log(`✓ Page ready in ${elapsed}ms`);
+    isPageReady = true;
+    return true;
 
-// Cooldown check function
-async function checkAndApplyCooldown() {
-  requestCount++;
-  
-  if (requestCount >= MAX_REQUESTS_BEFORE_COOLDOWN) {
-    console.log('\n⏸️  COOLDOWN TRIGGERED');
-    console.log(`Processed ${requestCount} requests. Starting 5-minute cooldown...`);
-    
-    lastCooldownTime = Date.now();
-    const cooldownEnd = new Date(lastCooldownTime + COOLDOWN_DURATION_MS);
-    
-    console.log(`Cooldown will end at: ${cooldownEnd.toLocaleTimeString()}`);
-    
-    // Wait for cooldown period
-    await delay(COOLDOWN_DURATION_MS);
-    
-    // Reset counter
-    requestCount = 0;
-    lastCooldownTime = null;
-    
-    console.log('✓ Cooldown complete. Resuming processing...\n');
+  } catch (error) {
+    const elapsed = Date.now() - startTime;
+    console.error(`❌ Page readiness failed after ${elapsed}ms: ${error.message}`);
+    isPageReady = false;
+    return false;
   }
 }
 
-// API Routes
+// ============================================================
+// API ROUTES
+// ============================================================
+
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -864,255 +406,421 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Reset Gemini chat endpoint
-app.post('/api/reset-chat', async (req, res) => {
-  try {
-    if (!isInitialized) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Browser not initialized' 
-      });
-    }
-    
-    console.log('🔄 Starting fresh Gemini chat...');
-    
-    // Navigate to the base URL to start a fresh chat
-    // (Ctrl+Shift+O opens Bookmarks in local Chrome, which detaches the frame)
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(e => console.log('Navigation timeout, continuing...'));
-    await delay(2000);
-    
-    // Clear response cache and active requests
-    responseCache.clear();
-    activeRequest = null;
-    activeRequestText = null;
-    
-    console.log('✓ Fresh chat started');
-    
-    res.json({ success: true, message: 'Chat reset successfully' });
-  } catch (error) {
-    console.error('❌ Failed to reset chat:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Cooldown status endpoint
-app.get('/api/cooldown-status', (req, res) => {
-  const inCooldown = lastCooldownTime !== null;
-  const remainingTime = inCooldown 
-    ? Math.max(0, COOLDOWN_DURATION_MS - (Date.now() - lastCooldownTime))
-    : 0;
-  
-  res.json({
-    requestCount: requestCount,
-    maxRequests: MAX_REQUESTS_BEFORE_COOLDOWN,
-    requestsUntilCooldown: MAX_REQUESTS_BEFORE_COOLDOWN - requestCount,
-    inCooldown: inCooldown,
-    cooldownRemainingMs: remainingTime,
-    cooldownRemainingMinutes: Math.ceil(remainingTime / 60000)
-  });
-});
-
-// Pause endpoint
-app.post('/api/pause', (req, res) => {
-  try {
-    if (isPaused) {
-      return res.json({ 
-        success: true, 
-        message: 'Already paused',
-        pausedAt: pauseTimestamp
-      });
-    }
-    
-    isPaused = true;
-    pauseTimestamp = new Date().toISOString();
-    
-    console.log('⏸️  PROCESSING PAUSED by user request');
-    console.log(`   Paused at: ${pauseTimestamp}`);
-    
-    res.json({ 
-      success: true, 
-      message: 'Processing paused',
-      pausedAt: pauseTimestamp
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Resume endpoint
-app.post('/api/resume', (req, res) => {
-  try {
-    if (!isPaused) {
-      return res.json({ 
-        success: true, 
-        message: 'Not paused'
-      });
-    }
-    
-    const pauseDuration = pauseTimestamp ? 
-      Math.floor((Date.now() - new Date(pauseTimestamp).getTime()) / 1000) : 0;
-    
-    isPaused = false;
-    const resumedAt = new Date().toISOString();
-    
-    console.log('▶️  PROCESSING RESUMED by user request');
-    console.log(`   Was paused for: ${pauseDuration}s`);
-    console.log(`   Resumed at: ${resumedAt}`);
-    
-    pauseTimestamp = null;
-    
-    res.json({ 
-      success: true, 
-      message: 'Processing resumed',
-      pauseDurationSeconds: pauseDuration,
-      resumedAt: resumedAt
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Pause status endpoint
-app.get('/api/pause-status', (req, res) => {
-  const pauseDuration = isPaused && pauseTimestamp ? 
-    Math.floor((Date.now() - new Date(pauseTimestamp).getTime()) / 1000) : 0;
-  
-  res.json({
-    isPaused: isPaused,
-    pausedAt: pauseTimestamp,
-    pauseDurationSeconds: pauseDuration
-  });
-});
-
-app.post('/api/generate-mcqs', async (req, res) => {
+// ---- SEND PROMPT (fire-and-forget, no waiting for response) ----
+app.post('/api/send-prompt', async (req, res) => {
   const requestId = Date.now();
-  
+
   try {
-    const { text, section, expected_mcqs } = req.body;
-    const expectedMcqs = expected_mcqs || 10; // Default to 10 if not provided
-    const domDelaySeconds = req.body.dom_delay_seconds || 1; // Default to 1 second
-    const domDelayMs = domDelaySeconds * 1000; // Convert to milliseconds
-    
+    const { text, section, expected_mcqs, content_type } = req.body;
+    const expectedMcqs = expected_mcqs || 10;
+
     if (!text) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Text is required' 
-      });
+      return res.status(400).json({ success: false, error: 'Text is required' });
     }
-    
+
     if (!isInitialized) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         success: false,
-        error: 'Browser not initialized. Please start the server and complete login.',
+        error: 'Browser not initialized',
         code: 'NOT_INITIALIZED'
       });
     }
-    
-    // Check if processing is paused
+
     if (isPaused) {
-      console.log(`⏸️  [Request ${requestId}] Rejected - Processing is paused`);
       return res.status(503).json({
         success: false,
-        error: 'Processing is paused. Please resume to continue.',
-        code: 'PAUSED',
-        pausedAt: pauseTimestamp
+        error: 'Processing is paused',
+        code: 'PAUSED'
       });
     }
-    
-    // Increment and check request counter for Premium model
-    const counter = incrementRequestCounter();
-    let warningMessage = null;
-    
-    if (counter.count >= 100) {
-      warningMessage = `⚠️ WARNING: You have used ${counter.count}/100 Premium requests today. The model may produce errors or rate limit responses.`;
-      console.log(warningMessage);
+
+    // Verify page ready
+    if (!isPageReady) {
+      const ready = await verifyPageReady(10000);
+      if (!ready) {
+        return res.status(503).json({
+          success: false,
+          error: 'Page not ready to accept input',
+          code: 'PAGE_NOT_READY'
+        });
+      }
     }
-    
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`[Request ${requestId}] Processing ${section || 'unknown'} section`);
-    console.log(`[Request ${requestId}] Text length: ${text.length} characters`);
-    console.log(`[Request ${requestId}] Expected MCQs: ${expectedMcqs}`);
-    console.log(`[Request ${requestId}] Premium requests today: ${counter.count}/100`);
-    console.log(`[Request ${requestId}] Current count: ${requestCount + 1}/${MAX_REQUESTS_BEFORE_COOLDOWN}`);
-    console.log('='.repeat(60));
-    
-    // Generate dynamic system prompt based on expected MCQs and content type
-    const contentType = req.body.content_type || 'mcq';
-    const systemPrompt = contentType === 'short_notes' 
+
+    // Increment premium counter
+    const counter = incrementRequestCounter();
+
+    // Generate system prompt
+    const ct = content_type || 'mcq';
+    const systemPrompt = ct === 'short_notes'
       ? generateShortNotesPrompt(expectedMcqs)
       : generateSystemPrompt(expectedMcqs);
-    
-    const contentLabel = contentType === 'short_notes' ? 'Short Notes' : 'MCQs';
-    console.log(`[Request ${requestId}] Content Type: ${contentLabel}`);
-    console.log(`[Request ${requestId}] DOM Delay: ${domDelaySeconds}s`);
-    
-    // Send to Gemini and get RAW response (no parsing on server)
-    const rawResponse = await sendToGemini(text, systemPrompt, domDelayMs);
-    
-    console.log(`✓ [Request ${requestId}] Raw response obtained (${rawResponse.length} characters)`);
+
+    const fullPrompt = systemPrompt + '\n\n' + text;
+
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[${requestId}] Sending prompt to Gemini`);
+    console.log(`[${requestId}] Section: ${section || 'unknown'}, Type: ${ct}, Expected: ${expectedMcqs}`);
+    console.log(`[${requestId}] Text: ${text.length} chars, Prompt: ${fullPrompt.length} chars`);
+    console.log(`[${requestId}] Premium today: ${counter.count}/100`);
     console.log('='.repeat(60));
-    
-    // Apply cooldown check AFTER successful response
-    await checkAndApplyCooldown();
-    
+
+    // Paste text into input field
+    const inputSel = 'textarea, div[role="textbox"]';
+    await page.waitForSelector(inputSel, { visible: true, timeout: 15000 });
+    await page.bringToFront();
+    await delay(500);
+
+    // Clear existing text
+    await page.click(inputSel);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('A');
+    await page.keyboard.up('Control');
+    await page.keyboard.press('Backspace');
+    await delay(500);
+
+    // Paste prompt directly
+    await page.evaluate((selector, textContent) => {
+      const element = document.querySelector(selector);
+      if (element) {
+        if (element.tagName === 'TEXTAREA') {
+          element.value = textContent;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (element.getAttribute('role') === 'textbox') {
+          element.textContent = textContent;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+    }, inputSel, fullPrompt);
+
+    console.log(`✓ Text pasted (${fullPrompt.length} chars)`);
+    await delay(1000);
+
+    // Press Enter to send
+    await page.keyboard.press('Enter');
+    console.log('✓ Prompt sent to Gemini — waiting for user to extract response manually');
+
     res.json({
       success: true,
-      raw_response: rawResponse,
-      cached: responseCache.has(generateCacheKey(text)),
-      requestCount: requestCount,
-      requestsUntilCooldown: MAX_REQUESTS_BEFORE_COOLDOWN - requestCount,
-      premium_request_count: counter.count,
-      premium_daily_limit: 100,
-      premium_warning: warningMessage
+      message: 'Prompt sent to Gemini successfully',
+      requestId: requestId,
+      promptLength: fullPrompt.length,
+      premium_count: counter.count
     });
 
-    
   } catch (error) {
-    console.error(`❌ [Request ${requestId}] Error:`, error.message);
-    console.error('='.repeat(60));
-    
-    // Determine appropriate status code
-    let statusCode = 500;
-    let errorCode = 'GENERATION_ERROR';
-    
-    if (error.message.includes('timeout') || error.message.includes('Timeout')) {
-      statusCode = 504;
-      errorCode = 'TIMEOUT';
-    } else if (error.message.includes('JSON') || error.message.includes('parse')) {
-      statusCode = 502;
-      errorCode = 'INVALID_RESPONSE';
-    } else if (error.message.includes('not initialized') || error.message.includes('login')) {
-      statusCode = 503;
-      errorCode = 'NOT_INITIALIZED';
-    }
-    
-    res.status(statusCode).json({
+    console.error(`❌ [${requestId}] Send failed:`, error.message);
+    res.status(500).json({
       success: false,
       error: error.message,
-      code: errorCode,
-      requestId: requestId
+      code: 'SEND_FAILED'
     });
   }
 });
 
-// Start server
+// ---- SEND FIX JSON (ask Gemini to fix broken JSON) ----
+app.post('/api/send-fix-json', async (req, res) => {
+  const requestId = Date.now();
+
+  try {
+    const { broken_json } = req.body;
+
+    if (!broken_json) {
+      return res.status(400).json({ success: false, error: 'broken_json is required' });
+    }
+
+    if (!isInitialized) {
+      return res.status(503).json({
+        success: false,
+        error: 'Browser not initialized',
+        code: 'NOT_INITIALIZED'
+      });
+    }
+
+    if (isPaused) {
+      return res.status(503).json({
+        success: false,
+        error: 'Processing is paused',
+        code: 'PAUSED'
+      });
+    }
+
+    // Verify page ready
+    if (!isPageReady) {
+      const ready = await verifyPageReady(10000);
+      if (!ready) {
+        return res.status(503).json({
+          success: false,
+          error: 'Page not ready to accept input',
+          code: 'PAGE_NOT_READY'
+        });
+      }
+    }
+
+    const fullPrompt = "The following JSON is invalid. Fix it and return ONLY valid JSON array. No explanation, no markdown, just the corrected JSON:\n\n" + broken_json;
+
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[${requestId}] Sending fix JSON prompt to Gemini`);
+    console.log(`[${requestId}] Prompt: ${fullPrompt.length} chars`);
+    console.log('='.repeat(60));
+
+    // Paste text into input field
+    const inputSel = 'textarea, div[role="textbox"]';
+    await page.waitForSelector(inputSel, { visible: true, timeout: 15000 });
+    await page.bringToFront();
+    await delay(500);
+
+    // Clear existing text
+    await page.click(inputSel);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('A');
+    await page.keyboard.up('Control');
+    await page.keyboard.press('Backspace');
+    await delay(500);
+
+    // Paste prompt directly
+    await page.evaluate((selector, textContent) => {
+      const element = document.querySelector(selector);
+      if (element) {
+        if (element.tagName === 'TEXTAREA') {
+          element.value = textContent;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (element.getAttribute('role') === 'textbox') {
+          element.textContent = textContent;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+    }, inputSel, fullPrompt);
+
+    console.log(`✓ Text pasted (${fullPrompt.length} chars)`);
+    await delay(1000);
+
+    // Press Enter to send
+    await page.keyboard.press('Enter');
+    console.log('✓ Fix Prompt sent to Gemini — waiting for user to extract response manually');
+
+    res.json({
+      success: true,
+      message: 'Fix prompt sent to Gemini successfully',
+      requestId: requestId
+    });
+
+  } catch (error) {
+    console.error(`❌ [${requestId}] Send fix failed:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: 'SEND_FAILED'
+    });
+  }
+});
+
+// ---- EXTRACT RESPONSE (instant grab, no waiting) ----
+app.post('/api/extract-response', async (req, res) => {
+  try {
+    if (!isInitialized) {
+      return res.status(503).json({
+        success: false,
+        error: 'Browser not initialized',
+        code: 'NOT_INITIALIZED'
+      });
+    }
+
+    console.log('📋 Extracting current response from Gemini...');
+
+    const messages = await page.$$('message-content');
+    if (messages.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No messages found on page',
+        code: 'NO_MESSAGES'
+      });
+    }
+
+    // Get the last message (most recent response)
+    const lastMessage = messages[messages.length - 1];
+
+    const text = await lastMessage.evaluate(el => {
+      // Try code block first
+      const codeBlock = el.querySelector('pre code, code[class*="language-"], .code-block code');
+      if (codeBlock && codeBlock.textContent.trim().length > 50) {
+        return codeBlock.textContent.trim();
+      }
+
+      // Try markdown container
+      const markdown = el.querySelector('.markdown');
+      if (markdown && markdown.textContent.trim().length > 50) {
+        return markdown.textContent.trim();
+      }
+
+      // Get all text content
+      return el.textContent.trim();
+    });
+
+    if (!text || text.length < 10) {
+      return res.status(404).json({
+        success: false,
+        error: `Response too short or empty (${text?.length || 0} chars)`,
+        code: 'EMPTY_RESPONSE'
+      });
+    }
+
+    console.log(`✓ Extracted ${text.length} characters`);
+
+    res.json({
+      success: true,
+      raw_response: text,
+      length: text.length
+    });
+
+  } catch (error) {
+    console.error('❌ Extract failed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: 'EXTRACT_FAILED'
+    });
+  }
+});
+
+// ---- RESET CHAT ----
+app.post('/api/reset-chat', async (req, res) => {
+  const resetStartTime = Date.now();
+
+  try {
+    if (!isInitialized) {
+      return res.status(503).json({
+        success: false,
+        error: 'Browser not initialized',
+        code: 'NOT_INITIALIZED'
+      });
+    }
+
+    console.log('🔄 Starting fresh Gemini chat...');
+    isPageReady = false;
+
+    const oldSessionId = chatSessionId;
+    chatSessionId++;
+    console.log(`   Session: ${oldSessionId} → ${chatSessionId}`);
+
+    // Navigate to fresh page
+    try {
+      await page.goto('https://gemini.google.com/app', {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+    } catch (navError) {
+      console.log(`⚠️ networkidle2 failed, retrying with domcontentloaded...`);
+      try {
+        await page.goto('https://gemini.google.com/app', {
+          waitUntil: 'domcontentloaded',
+          timeout: 20000
+        });
+        await delay(5000);
+      } catch (navError2) {
+        const elapsed = Date.now() - resetStartTime;
+        return res.status(500).json({
+          success: false,
+          error: `Navigation failed: ${navError2.message}`,
+          code: 'NAVIGATION_FAILED',
+          elapsed_ms: elapsed
+        });
+      }
+    }
+
+    await delay(2000);
+
+    // Verify readiness
+    const pageReady = await verifyPageReady(15000);
+    if (!pageReady) {
+      await delay(3000);
+      const retryReady = await verifyPageReady(10000);
+      if (!retryReady) {
+        const elapsed = Date.now() - resetStartTime;
+        return res.status(500).json({
+          success: false,
+          error: 'Page not ready after reset',
+          code: 'PAGE_NOT_READY',
+          elapsed_ms: elapsed
+        });
+      }
+    }
+
+    const elapsed = Date.now() - resetStartTime;
+    console.log(`✓ Fresh chat started (session ${chatSessionId}, ${elapsed}ms)`);
+
+    res.json({
+      success: true,
+      message: 'Chat reset successfully',
+      chatSessionId: chatSessionId,
+      elapsed_ms: elapsed
+    });
+
+  } catch (error) {
+    const elapsed = Date.now() - resetStartTime;
+    console.error(`❌ Reset failed: ${error.message} (${elapsed}ms)`);
+    isPageReady = false;
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: 'RESET_FAILED',
+      elapsed_ms: elapsed
+    });
+  }
+});
+
+// ---- PAUSE / RESUME / STATUS ----
+app.post('/api/pause', (req, res) => {
+  if (isPaused) {
+    return res.json({ success: true, message: 'Already paused', pausedAt: pauseTimestamp });
+  }
+  isPaused = true;
+  pauseTimestamp = new Date().toISOString();
+  console.log(`⏸️ PAUSED at ${pauseTimestamp}`);
+  res.json({ success: true, message: 'Processing paused', pausedAt: pauseTimestamp });
+});
+
+app.post('/api/resume', (req, res) => {
+  if (!isPaused) {
+    return res.json({ success: true, message: 'Not paused' });
+  }
+  const duration = pauseTimestamp
+    ? Math.floor((Date.now() - new Date(pauseTimestamp).getTime()) / 1000)
+    : 0;
+  isPaused = false;
+  pauseTimestamp = null;
+  console.log(`▶️ RESUMED (was paused ${duration}s)`);
+  res.json({ success: true, message: 'Processing resumed', pauseDurationSeconds: duration });
+});
+
+app.get('/api/pause-status', (req, res) => {
+  const duration = isPaused && pauseTimestamp
+    ? Math.floor((Date.now() - new Date(pauseTimestamp).getTime()) / 1000)
+    : 0;
+  res.json({ isPaused, pausedAt: pauseTimestamp, pauseDurationSeconds: duration });
+});
+
+// ============================================================
+// SERVER STARTUP
+// ============================================================
+
 async function startServer() {
-  // Initialize browser first
   const initialized = await initializeBrowser();
-  
   if (!initialized) {
     console.error('Failed to initialize browser. Exiting...');
     process.exit(1);
   }
-  
-  // Start Express server
+
   app.listen(PORT, () => {
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 Gemini MCQ Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Gemini Server running on http://localhost:${PORT}`);
     console.log(`${'='.repeat(60)}\n`);
-    console.log('Available endpoints:');
-    console.log(`  GET  /api/health          - Check server status`);
-    console.log(`  POST /api/generate-mcqs   - Generate MCQs from text`);
+    console.log('Endpoints:');
+    console.log('  GET  /api/health           - Server status');
+    console.log('  POST /api/send-prompt      - Send prompt to Gemini');
+    console.log('  POST /api/extract-response - Extract current response');
+    console.log('  POST /api/reset-chat       - Fresh chat session');
+    console.log('  POST /api/pause            - Pause processing');
+    console.log('  POST /api/resume           - Resume processing');
     console.log('');
   });
 }
@@ -1126,5 +834,4 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-// Start the server
 startServer();
