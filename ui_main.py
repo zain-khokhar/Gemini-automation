@@ -102,7 +102,7 @@ QFrame#card {{
 }}
 
 /* ── Inputs ── */
-QLineEdit, QTextEdit, QSpinBox, QComboBox {{
+QLineEdit, QTextEdit, QSpinBox {{
     background: {PALETTE['surface']};
     border: 1.5px solid {PALETTE['border']};
     border-radius: 7px;
@@ -110,16 +110,39 @@ QLineEdit, QTextEdit, QSpinBox, QComboBox {{
     color: {PALETTE['text_primary']};
     selection-background-color: {PALETTE['accent']};
 }}
-QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {{
+QLineEdit:focus, QTextEdit:focus, QSpinBox:focus {{
     border: 1.5px solid {PALETTE['border_focus']};
     outline: none;
 }}
 QLineEdit::placeholder {{
     color: {PALETTE['text_muted']};
 }}
+
+/* ── ComboBox (dropdown button) ── */
+QComboBox {{
+    background: {PALETTE['surface']};
+    border: 2px solid {PALETTE['border']};
+    border-radius: 7px;
+    padding: 6px 12px;
+    color: {PALETTE['text_primary']};
+    font-weight: 500;
+    min-height: 20px;
+}}
+QComboBox:hover {{
+    border-color: {PALETTE['accent']};
+    background: {PALETTE['row_hover']};
+}}
+QComboBox:focus {{
+    border: 2px solid {PALETTE['border_focus']};
+    outline: none;
+}}
 QComboBox::drop-down {{
     border: none;
-    width: 24px;
+    border-left: 1.5px solid {PALETTE['border']};
+    width: 28px;
+    background: {PALETTE['bg']};
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
 }}
 QComboBox::down-arrow {{
     width: 10px;
@@ -127,10 +150,11 @@ QComboBox::down-arrow {{
 }}
 QComboBox QAbstractItemView {{
     background: {PALETTE['surface']};
-    border: 1.5px solid {PALETTE['border']};
+    border: 2px solid {PALETTE['border']};
     border-radius: 7px;
     selection-background-color: {PALETTE['row_hover']};
     selection-color: {PALETTE['text_primary']};
+    padding: 4px;
 }}
 
 /* ── Buttons ── */
@@ -436,13 +460,15 @@ class ProcessingTab(QWidget):
         self.root_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         folder_layout.addWidget(self.root_path_label, 1)
 
-        self.change_root_btn = QPushButton("Change")
-        self.change_root_btn.setFixedWidth(80)
+        self.change_root_btn = QPushButton("  Change  ")
+        self.change_root_btn.setMinimumWidth(95)
+        self.change_root_btn.setFixedHeight(32)
         self.change_root_btn.clicked.connect(self._browse_root_folder)
         folder_layout.addWidget(self.change_root_btn)
 
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setFixedWidth(80)
+        self.refresh_btn = QPushButton("  Refresh  ")
+        self.refresh_btn.setMinimumWidth(95)
+        self.refresh_btn.setFixedHeight(32)
         self.refresh_btn.clicked.connect(self._refresh_pdf_list)
         folder_layout.addWidget(self.refresh_btn)
         root_layout.addWidget(folder_card)
@@ -469,6 +495,7 @@ class ProcessingTab(QWidget):
         self.pdf_count_label = label_muted("0 PDFs")
         self.pdf_count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         pdf_count_layout.addWidget(self.pdf_count_label)
+        search_row.addWidget(pdf_count_card)
 
         root_layout.addLayout(search_row)
 
@@ -537,21 +564,32 @@ class ProcessingTab(QWidget):
         content_layout.addWidget(self.notes_check)
         settings_row.addWidget(content_card, 1)
 
-        # Model card
-        model_card, model_layout = make_card('v', (14, 12, 14, 12), 8)
-        model_layout.addWidget(label_secondary("Model"))
-        self.model_bg = QButtonGroup()
-        self.fast_radio = QRadioButton("Fast")
-        self.fast_radio.setChecked(True)
-        self.premium_radio = QRadioButton("Premium")
-        for r in [self.fast_radio, self.premium_radio]:
-            model_layout.addWidget(r)
-            self.model_bg.addButton(r)
-        settings_row.addWidget(model_card, 1)
+        root_layout.addLayout(settings_row)
 
-        # Settings card (delay, pages, reset)
-        tuning_card, tuning_layout = make_card('v', (14, 12, 14, 12), 8)
-        tuning_layout.addWidget(label_secondary("Settings"))
+        # ── Advanced Settings (collapsible) ────────────────────
+        self.adv_settings_btn = QPushButton("⚙  Advanced Settings  ▼")
+        self.adv_settings_btn.setFixedHeight(32)
+        self.adv_settings_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9.5pt;
+                font-weight: 500;
+                padding: 4px 16px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['accent']};
+                color: {PALETTE['accent']};
+                background: {PALETTE['row_hover']};
+            }}
+        """)
+        self.adv_settings_btn.clicked.connect(self._toggle_advanced_settings)
+        root_layout.addWidget(self.adv_settings_btn)
+
+        self.adv_settings_card, adv_layout = make_card('h', (14, 12, 14, 12), 20)
 
         def spin_row(label_text, minimum, maximum, default, tooltip=""):
             row = QHBoxLayout()
@@ -571,15 +609,26 @@ class ProcessingTab(QWidget):
             row.addWidget(sp)
             return row, sp
 
-        delay_row, self.delay_spin = spin_row("Delay (s)", 1, 15, 1)
-        pages_row, self.pages_spin = spin_row("Pages/batch", 1, 20, 10)
-        reset_row, self.reset_spin = spin_row("Reset after", 1, 50, 5, "Reset Gemini chat after N requests")
-        tuning_layout.addLayout(delay_row)
-        tuning_layout.addLayout(pages_row)
-        tuning_layout.addLayout(reset_row)
-        settings_row.addWidget(tuning_card, 1)
+        delay_col = QVBoxLayout()
+        delay_col.addWidget(label_secondary("Delay (sec)"))
+        delay_row, self.delay_spin = spin_row("Seconds", 1, 15, 1)
+        delay_col.addLayout(delay_row)
+        adv_layout.addLayout(delay_col)
 
-        root_layout.addLayout(settings_row)
+        pages_col = QVBoxLayout()
+        pages_col.addWidget(label_secondary("Pages / Batch"))
+        pages_row, self.pages_spin = spin_row("Pages", 1, 20, 10)
+        pages_col.addLayout(pages_row)
+        adv_layout.addLayout(pages_col)
+
+        reset_col = QVBoxLayout()
+        reset_col.addWidget(label_secondary("Chat Reset After"))
+        reset_row, self.reset_spin = spin_row("Requests", 1, 50, 5, "Reset Gemini chat after N requests")
+        reset_col.addLayout(reset_row)
+        adv_layout.addLayout(reset_col)
+
+        self.adv_settings_card.setVisible(False)
+        root_layout.addWidget(self.adv_settings_card)
 
         # ── Control buttons ───────────────────────────────────
         btn_row = QHBoxLayout()
@@ -749,6 +798,14 @@ class ProcessingTab(QWidget):
         f.setFrameShape(QFrame.VLine)
         f.setStyleSheet(f"color: {PALETTE['border']}; background: {PALETTE['border']}; border: none; max-width: 1px;")
         return f
+
+    def _toggle_advanced_settings(self):
+        visible = not self.adv_settings_card.isVisible()
+        self.adv_settings_card.setVisible(visible)
+        if visible:
+            self.adv_settings_btn.setText("⚙  Advanced Settings  ▲")
+        else:
+            self.adv_settings_btn.setText("⚙  Advanced Settings  ▼")
 
     def _load_root_folder_from_config(self):
         cfg = self._read_config()
@@ -937,7 +994,6 @@ class ProcessingTab(QWidget):
             start_pdf_index=1,
             delay_seconds=self.delay_spin.value(),
             pages_per_request=self.pages_spin.value(),
-            is_premium_model=self.premium_radio.isChecked(),
             content_types=content_types,
             chat_reset_threshold=self.reset_spin.value()
         )
@@ -1108,6 +1164,7 @@ class PDFGeneratorTab(QWidget):
         super().__init__()
         self.json_files = []
         self.pdf_gen_thread = None
+        self.show_converted = False
         self._build_ui()
         self._auto_load_json_files()
 
@@ -1142,15 +1199,15 @@ class PDFGeneratorTab(QWidget):
         source_top.addWidget(label_secondary("JSON Source"))
         source_top.addStretch()
 
-        self.reload_btn = QPushButton("Reload")
-        self.reload_btn.setFixedHeight(28)
-        self.reload_btn.setFixedWidth(70)
+        self.reload_btn = QPushButton("  Reload  ")
+        self.reload_btn.setFixedHeight(32)
+        self.reload_btn.setMinimumWidth(90)
         self.reload_btn.clicked.connect(self._auto_load_json_files)
         source_top.addWidget(self.reload_btn)
 
-        self.browse_json_btn = QPushButton("Browse Folder")
-        self.browse_json_btn.setFixedHeight(28)
-        self.browse_json_btn.setFixedWidth(110)
+        self.browse_json_btn = QPushButton("  Browse Folder  ")
+        self.browse_json_btn.setFixedHeight(32)
+        self.browse_json_btn.setMinimumWidth(130)
         self.browse_json_btn.clicked.connect(self._browse_json_folder)
         source_top.addWidget(self.browse_json_btn)
 
@@ -1161,21 +1218,57 @@ class PDFGeneratorTab(QWidget):
 
         # Search + filter for JSON files
         json_search_row = QHBoxLayout()
+        json_search_row.setSpacing(8)
         self.json_search = QLineEdit()
         self.json_search.setPlaceholderText("Filter by filename...")
         self.json_search.setMinimumHeight(32)
         self.json_search.textChanged.connect(self._filter_json_list)
-        json_search_row.addWidget(self.json_search, 2)
+        json_search_row.addWidget(self.json_search, 3)
+
+        self.json_category_combo = QComboBox()
+        self.json_category_combo.setMinimumHeight(32)
+        self.json_category_combo.setMinimumWidth(140)
+        self.json_category_combo.addItem("All Categories")
+        self.json_category_combo.currentIndexChanged.connect(self._filter_json_list)
+        json_search_row.addWidget(self.json_category_combo, 1)
 
         self.json_type_combo = QComboBox()
         self.json_type_combo.setMinimumHeight(32)
+        self.json_type_combo.setMinimumWidth(120)
         self.json_type_combo.addItems(["All Types", "MCQs", "Short Notes"])
         self.json_type_combo.currentIndexChanged.connect(self._filter_json_list)
         json_search_row.addWidget(self.json_type_combo, 1)
 
         source_layout.addLayout(json_search_row)
 
-        # JSON file table
+        # Toggle: show/hide converted files
+        toggle_row = QHBoxLayout()
+        self.converted_toggle_btn = QPushButton("Show Converted (0)")
+        self.converted_toggle_btn.setFixedHeight(28)
+        self.converted_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 6px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9pt;
+                padding: 3px 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['accent']};
+                color: {PALETTE['accent']};
+            }}
+        """)
+        self.converted_toggle_btn.clicked.connect(self._toggle_converted)
+        toggle_row.addWidget(self.converted_toggle_btn)
+
+        self.json_count_label = label_muted("0 files")
+        self.json_count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        toggle_row.addStretch()
+        toggle_row.addWidget(self.json_count_label)
+        source_layout.addLayout(toggle_row)
+
+        # JSON file table (unprocessed)
         self.json_table = QTableWidget(0, 4)
         self.json_table.setHorizontalHeaderLabels(["#", "File Name", "Category", "Type"])
         self.json_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
@@ -1183,17 +1276,59 @@ class PDFGeneratorTab(QWidget):
         self.json_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.json_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self.json_table.setColumnWidth(0, 44)
-        self.json_table.setColumnWidth(2, 110)
+        self.json_table.setColumnWidth(2, 120)
         self.json_table.setColumnWidth(3, 90)
         self.json_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.json_table.setAlternatingRowColors(True)
         self.json_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.json_table.verticalHeader().setVisible(False)
-        self.json_table.setMinimumHeight(220)
-        self.json_table.setMaximumHeight(300)
+        self.json_table.setMinimumHeight(180)
+        self.json_table.setMaximumHeight(260)
         self.json_table.setShowGrid(False)
         source_layout.addWidget(self.json_table)
         root_layout.addWidget(source_card)
+
+        # ── Generated PDFs Section (category-wise) ────────────
+        self.gen_pdfs_btn = QPushButton("📄  Generated PDFs  ▼")
+        self.gen_pdfs_btn.setFixedHeight(32)
+        self.gen_pdfs_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9.5pt;
+                font-weight: 500;
+                padding: 4px 16px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['success']};
+                color: {PALETTE['success']};
+                background: {PALETTE['row_hover']};
+            }}
+        """)
+        self.gen_pdfs_btn.clicked.connect(self._toggle_generated_pdfs)
+        root_layout.addWidget(self.gen_pdfs_btn)
+
+        self.gen_pdfs_card, gen_pdfs_layout = make_card('v', (14, 12, 14, 12), 6)
+        self.gen_pdfs_table = QTableWidget(0, 3)
+        self.gen_pdfs_table.setHorizontalHeaderLabels(["#", "PDF File", "Category"])
+        self.gen_pdfs_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.gen_pdfs_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.gen_pdfs_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.gen_pdfs_table.setColumnWidth(0, 44)
+        self.gen_pdfs_table.setColumnWidth(2, 120)
+        self.gen_pdfs_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.gen_pdfs_table.setAlternatingRowColors(True)
+        self.gen_pdfs_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.gen_pdfs_table.verticalHeader().setVisible(False)
+        self.gen_pdfs_table.setMinimumHeight(120)
+        self.gen_pdfs_table.setMaximumHeight(220)
+        self.gen_pdfs_table.setShowGrid(False)
+        gen_pdfs_layout.addWidget(self.gen_pdfs_table)
+        self.gen_pdfs_card.setVisible(False)
+        root_layout.addWidget(self.gen_pdfs_card)
 
         # ── Selection & output card ───────────────────────────
         opts_row = QHBoxLayout()
@@ -1218,9 +1353,9 @@ class PDFGeneratorTab(QWidget):
         self.pdf_out_path.setMinimumHeight(32)
         out_layout.addWidget(self.pdf_out_path)
 
-        browse_out_btn = QPushButton("Browse")
-        browse_out_btn.setFixedHeight(28)
-        browse_out_btn.setFixedWidth(70)
+        browse_out_btn = QPushButton("  Browse  ")
+        browse_out_btn.setFixedHeight(32)
+        browse_out_btn.setMinimumWidth(90)
         browse_out_btn.clicked.connect(self._browse_output_dir)
         out_layout.addWidget(browse_out_btn)
         opts_row.addWidget(out_card, 2)
@@ -1316,7 +1451,29 @@ class PDFGeneratorTab(QWidget):
     def _scan_json_from_root(self, root_path):
         from pdf_generator import scan_json_files
         self.json_files = scan_json_files(root_path)
-        self._populate_json_table(self.json_files)
+
+        # Check which JSON files already have a generated PDF
+        for item in self.json_files:
+            json_path = Path(item['path'])
+            pdf_sibling = json_path.with_suffix('.pdf')
+            item['has_pdf'] = pdf_sibling.exists()
+
+        # Populate category combo
+        categories = sorted(set(f['category'] for f in self.json_files))
+        self.json_category_combo.blockSignals(True)
+        self.json_category_combo.clear()
+        self.json_category_combo.addItem("All Categories")
+        for cat in categories:
+            count = len([f for f in self.json_files if f['category'] == cat])
+            self.json_category_combo.addItem(f"{cat}  ({count})")
+        self.json_category_combo.blockSignals(False)
+
+        # Update toggle button count
+        converted_count = len([f for f in self.json_files if f.get('has_pdf')])
+        self.converted_toggle_btn.setText(f"Show Converted ({converted_count})")
+
+        self._filter_json_list()
+        self._refresh_generated_pdfs_table()
         self._add_gen_log(f"Found {len(self.json_files)} JSON files in {root_path}", "success")
 
     def _browse_json_folder(self):
@@ -1333,16 +1490,101 @@ class PDFGeneratorTab(QWidget):
         if folder:
             self.pdf_out_path.setText(folder)
 
+    def _toggle_converted(self):
+        self.show_converted = not self.show_converted
+        converted_count = len([f for f in self.json_files if f.get('has_pdf')])
+        if self.show_converted:
+            self.converted_toggle_btn.setText(f"Hide Converted ({converted_count})")
+            self.converted_toggle_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {PALETTE['row_hover']};
+                    border: 1.5px solid {PALETTE['accent']};
+                    border-radius: 6px;
+                    color: {PALETTE['accent']};
+                    font-size: 9pt;
+                    font-weight: 500;
+                    padding: 3px 14px;
+                }}
+                QPushButton:hover {{
+                    background: {PALETTE['surface']};
+                }}
+            """)
+        else:
+            self.converted_toggle_btn.setText(f"Show Converted ({converted_count})")
+            self.converted_toggle_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {PALETTE['surface']};
+                    border: 1.5px solid {PALETTE['border']};
+                    border-radius: 6px;
+                    color: {PALETTE['text_secondary']};
+                    font-size: 9pt;
+                    padding: 3px 14px;
+                }}
+                QPushButton:hover {{
+                    border-color: {PALETTE['accent']};
+                    color: {PALETTE['accent']};
+                }}
+            """)
+        self._filter_json_list()
+
+    def _toggle_generated_pdfs(self):
+        visible = not self.gen_pdfs_card.isVisible()
+        self.gen_pdfs_card.setVisible(visible)
+        if visible:
+            self.gen_pdfs_btn.setText("📄  Generated PDFs  ▲")
+        else:
+            self.gen_pdfs_btn.setText("📄  Generated PDFs  ▼")
+
+    def _refresh_generated_pdfs_table(self):
+        """Populate the generated PDFs table grouped by category"""
+        converted = [f for f in self.json_files if f.get('has_pdf')]
+        converted.sort(key=lambda x: (x['category'], x['name']))
+
+        self.gen_pdfs_table.setRowCount(0)
+        for i, item in enumerate(converted, 1):
+            row = self.gen_pdfs_table.rowCount()
+            self.gen_pdfs_table.insertRow(row)
+
+            idx_item = QTableWidgetItem(str(i))
+            idx_item.setTextAlignment(Qt.AlignCenter)
+            idx_item.setForeground(QColor(PALETTE['text_muted']))
+
+            pdf_name = Path(item['path']).with_suffix('.pdf').name
+            name_item = QTableWidgetItem(pdf_name)
+            name_item.setForeground(QColor(PALETTE['success']))
+
+            cat_item = QTableWidgetItem(item['category'])
+            cat_item.setTextAlignment(Qt.AlignCenter)
+            cat_item.setForeground(QColor(PALETTE['text_secondary']))
+
+            self.gen_pdfs_table.setItem(row, 0, idx_item)
+            self.gen_pdfs_table.setItem(row, 1, name_item)
+            self.gen_pdfs_table.setItem(row, 2, cat_item)
+
+        # Update button text with count
+        self.gen_pdfs_btn.setText(f"📄  Generated PDFs ({len(converted)})  {'▲' if self.gen_pdfs_card.isVisible() else '▼'}")
+
     def _filter_json_list(self):
         search = self.json_search.text().strip().lower()
         type_filter = self.json_type_combo.currentText()
+        cat_idx = self.json_category_combo.currentIndex()
+        cat_text = self.json_category_combo.currentText()
 
         filtered = self.json_files
+
+        # Hide converted unless toggled on
+        if not self.show_converted:
+            filtered = [f for f in filtered if not f.get('has_pdf', False)]
+
         if search:
             filtered = [f for f in filtered if search in f['name'].lower()]
         if type_filter != "All Types":
             filtered = [f for f in filtered if f['type'] == type_filter]
+        if cat_idx > 0:
+            cat_name = cat_text.split("  (")[0]
+            filtered = [f for f in filtered if f['category'] == cat_name]
 
+        self.json_count_label.setText(f"{len(filtered)} files")
         self._populate_json_table(filtered)
 
     def _populate_json_table(self, files):
@@ -1437,6 +1679,18 @@ class PDFGeneratorTab(QWidget):
         if success:
             self.gen_progress.setValue(100)
             self._add_gen_log(f"Done: {message}", "success")
+
+            # Refresh has_pdf flags so converted files move to Generated section
+            for item in self.json_files:
+                json_path = Path(item['path'])
+                pdf_sibling = json_path.with_suffix('.pdf')
+                item['has_pdf'] = pdf_sibling.exists()
+
+            converted_count = len([f for f in self.json_files if f.get('has_pdf')])
+            self.converted_toggle_btn.setText(f"{'Hide' if self.show_converted else 'Show'} Converted ({converted_count})")
+            self._filter_json_list()
+            self._refresh_generated_pdfs_table()
+
             QMessageBox.information(self, "Done", message)
         else:
             self._add_gen_log(f"Error: {message}", "error")
