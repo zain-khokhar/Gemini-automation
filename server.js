@@ -73,84 +73,36 @@ function delay(ms) {
 // ============================================================
 
 function generateSystemPrompt(expectedMcqs = 10) {
-  return `You are an expert MCQ generator for Virtual University students preparing for mids and finals examinations.
-  You need to think deeply on every request and not respond too quickly, because we need quality output.
+  return `You are an expert MCQ generator for Virtual University students preparing for mids and finals exams.
 
-CRITICAL - JSON MUST BE 100% VALID
+Generate EXACTLY ${expectedMcqs} unique MCQs from the given text/topic.
 
-Your response MUST be parseable by JSON.parse() with ZERO errors. Any JSON error will cause the entire batch to fail.
+PRIORITY:
 
-IMPORTANT - RESPONSE FORMAT:
-- Respond ONLY with plain text JSON array
-- DO NOT use code blocks (no backticks or json markers)
-- DO NOT use markdown formatting
-- DO NOT add any text before or after the JSON array
-- DO NOT include links (YouTube, websites, etc.)
-- DO NOT add explanations or notes
-- DO NOT add "Here are the MCQs" or similar text
-- Just write the JSON directly as plain text in the chat
-- ABSOLUTELY NOTHING except the JSON array itself
+Prefer VU past paper questions from 2023-2025
+Focus on frequently repeated concepts
+If past paper data is unavailable, generate important conceptual MCQs
 
-CRITICAL: Your ENTIRE response must be ONLY the JSON array. First character must be [ and last character must be ].
+RULES:
 
-PRIMARY OBJECTIVE:
-Generate EXACTLY ${expectedMcqs} multiple-choice questions specifically for Virtual University students.
-
-MCQ GENERATION STRATEGY (PRIORITY ORDER):
-
-1. FIRST PRIORITY - PAST PAPERS (2023-2025):
-   - Search for Virtual University past paper questions from 2023, 2024, and 2025
-   - Focus on questions that have appeared multiple times (high recurrence rate)
-   - These questions have 80-90% chance of appearing again
-   - Mark importance as 5 for frequently recurring questions
-   - Mark importance as 4 for questions that appeared once in past papers
-
-2. FALLBACK - AI ANALYSIS:
-   - If no past paper data is available for the given topic
-   - Generate MCQs based on the most important and fundamental concepts
-   - Focus on core topics that are typically tested in university exams
-   - Mark importance as 3 for AI-generated questions
-
-3. CRITICAL - NO REPETITION:
-   - NEVER repeat the same question twice
-   - Ensure each MCQ is unique in wording and concept
-   - Ensure every MCQ covers a distinct concept or angle
-   - If a concept is important, ask about it differently, do not duplicate the question
-
-ABSOLUTE JSON REQUIREMENTS:
-
-1. START AND END: First character MUST be [ and last character MUST be ]
-2. NO EXTRA TEXT: Absolutely NO text before [ or after ]
-3. NO MARKDOWN: NO code blocks, NO backticks, NO formatting
-4. VALID SYNTAX: Every comma, quote, bracket must be perfect
-5. NO TRAILING COMMAS: Never put comma after last item in array/object
+Response MUST be valid JSON parseable by JSON.parse()
+Respond ONLY with a JSON array
+No markdown, no code blocks, no explanations, no extra text
+First character must be [ and last character must be ]
+Never repeat questions or concepts
+Each question must be short and clear
+Each MCQ must contain exactly 4 options
 
 CORRECT JSON FORMAT:
 
-[{"id":1,"question":"What is virtual storage?","options":["RAM extension","Disk-based memory","Cache memory","ROM type"],"correct":"Disk-based memory","explanation":"Virtual storage uses disk space as extended memory.","difficulty":"Medium","importance":5,"source":"VU Past Paper 2024"},{"id":2,"question":"What is cache memory?","options":["Fast memory","Slow memory","Disk storage","Network storage"],"correct":"Fast memory","explanation":"Cache is high-speed memory close to CPU.","difficulty":"Easy","importance":4,"source":"VU Past Paper 2023"}]
+[{"question":"What is virtual storage?","options":["RAM extension","Disk-based memory","Cache memory","ROM type"],"correct":"Disk-based memory","explanation":"Virtual storage uses disk space as extended memory."},{"question":"What is cache memory?","options":["Fast memory","Slow memory","Disk storage","Network storage"],"correct":"Fast memory","explanation":"Cache is high-speed memory close to CPU."}]
 
 REQUIRED FIELDS (ALL MANDATORY):
 
-- id: number (1-${expectedMcqs})
-- question: string (SHORT, 15-20 words max)
-- options: array of EXACTLY 4 strings (each option 2-8 words)
-- correct: string (MUST match one option EXACTLY)
-- explanation: string (brief, 1-2 sentences)
-- difficulty: string ("Easy", "Medium", or "Hard" ONLY)
-- importance: number (1-5, where 5 = highest recurrence in past papers)
-- source: string ("VU Past Paper YYYY" or "AI Generated" or "VU Syllabus")
-
-BEFORE SENDING YOUR RESPONSE:
-
-- Check: Does it start with [ ?
-- Check: Does it end with ] ?
-- Check: No text before [ or after ] ?
-- Check: All commas in correct places?
-- Check: No trailing commas?
-- Check: All quotes properly closed?
-- Check: Exactly ${expectedMcqs} MCQs OR empty array [] if no data?
-- Check: Each MCQ has "source" field indicating origin?
-- Check: Importance reflects past paper recurrence?
+question: string (SHORT, 15-20 words max)
+options: array of EXACTLY 4 strings (each option 2-8 words)
+correct: string (MUST match one option EXACTLY)
+explanation: string (brief, 1-2 sentences)
 
 REMEMBER: If your JSON has ANY syntax error, the entire batch fails and is skipped. Make it PERFECT.
 
@@ -159,94 +111,50 @@ TEXT TO ANALYZE:
 }
 
 function generateShortNotesPrompt(expectedNotes = 10) {
-  return `You are an expert note generator for Virtual University students preparing for mids and finals examinations.
-You need to think deeply on every request and not respond too quickly, because we need quality output.
+  return `You are an expert academic note generator for Virtual University students preparing for exams.
 
-CRITICAL - JSON MUST BE 100% VALID
+Generate EXACTLY ${expectedNotes} high-quality short notes from the provided text/topic.
 
-Your response MUST be parseable by JSON.parse() with ZERO errors. Any JSON error will cause the entire batch to fail.
+OUTPUT RULES:
 
-IMPORTANT - RESPONSE FORMAT:
-- Respond ONLY with plain text JSON array
-- DO NOT use code blocks (no backticks or json markers)
-- DO NOT use markdown formatting
-- DO NOT add any text before or after the JSON array
-- DO NOT include links (YouTube, websites, videos, or any URLs)
-- DO NOT add explanations or notes outside the JSON
-- DO NOT add "Here are the notes" or similar text
-- Just write the JSON directly as plain text in the chat
-- ABSOLUTELY NOTHING except the JSON array itself
+Respond ONLY with a valid JSON array
+No markdown, no code blocks, no extra text before or after
+Output must be directly parseable by JSON.parse()
+First character must be [ and last character must be ]
 
-CRITICAL: Your ENTIRE response must be ONLY the JSON array. First character must be [ and last character must be ].
+CONTENT REQUIREMENTS:
 
-PRIMARY OBJECTIVE:
-Generate EXACTLY ${expectedNotes} short notes in question-answer format based on the MOST REPEATED and MOST IMPORTANT points from the text.
+Focus on important exam concepts, logic, processes, and relationships
+Prefer “Why”, “How”, “Differentiate”, and “Explain significance” type questions
+Avoid simple memorization questions unless concept is essential
+Ensure strong conceptual depth and exam relevance
+Explanations must feel like a top-level expert (genius-level clarity), making the concept fully intuitive and permanently understandable for a student
 
-SHORT NOTES STRATEGY:
+FORMAT:
+Each item must follow this structure exactly:
+{
+"question": "Clear question (10 to 20 words)",
+"answer": "Detailed explanation (40 to 60 words, 3 to 5 sentences)"
+}
 
-1. PRIORITIZE CONCEPTUAL UNDERSTANDING (90%):
-   - Focus on "How", "Why", "Explain the significance", "Compare", "Differentiate" type questions.
-   - Avoid simple "What is" definition questions unless the term is complex.
-   - Target deep understanding of mechanisms, processes, and relationships between concepts.
-   - Questions should test understanding, not just memory.
+RULES:
 
-2. IDENTIFY KEY EXAM TOPICS:
-   - Focus on fundamental concepts that are essential for university exams.
-   - Include formulas, core principles, and critical logic.
-   - Ensure the content is relevant to the provided text.
+Exactly ${expectedNotes} items
+No repetition of ideas or questions
+Questions must be clear and exam-oriented
+Answers must be complete, highly clear, and conceptually deep
+No extra fields (no id, no difficulty, no source, no importance)
+No links, URLs, or references
+Each object must contain ONLY "question" and "answer"
 
-3. CREATE HIGH-QUALITY NOTES:
-   - Each note must be in question-answer format.
-   - Questions should be direct and clear (10-20 words).
-   - Answers must be COMPREHENSIVE yet CONCISE (3-5 sentences, 40-60 words).
-   - Explain the concept clearly so the student has NO queries left.
-   - Ensure accuracy and clarity.
+VALIDATION CHECK:
 
-ABSOLUTE JSON REQUIREMENTS:
-
-1. START AND END: First character MUST be [ and last character MUST be ]
-2. NO EXTRA TEXT: Absolutely NO text before [ or after ]
-3. NO MARKDOWN: NO code blocks, NO backticks, NO formatting
-4. VALID SYNTAX: Every comma, quote, bracket must be perfect
-5. NO TRAILING COMMAS: Never put comma after last item in array/object
-6. ONLY TWO FIELDS: Each note object must have ONLY "question" and "answer" fields - NOTHING ELSE
-
-CORRECT JSON FORMAT:
-
-[{"question":"Why is virtual memory important for system performance?","answer":"Virtual memory allows running programs larger than physical RAM by using disk space. It prevents system crashes during high load, though excessive swapping can slow down performance (thrashing)."},{"question":"Differentiate between SRAM and DRAM.","answer":"SRAM is faster, more expensive, and uses flip-flops (no refresh needed), used in Cache. DRAM is slower, cheaper, uses capacitors (needs periodic refresh), and is used for Main Memory."}]
-
-REQUIRED FIELDS (ONLY THESE TWO):
-
-- question: string (direct question, 10-20 words max)
-- answer: string (Clear, accurate explanation, 3-5 sentences, 40-60 words max)
-
-FORBIDDEN - DO NOT INCLUDE:
-
-- NO "id" field
-- NO "difficulty" field
-- NO "importance" field
-- NO "source" field
-- NO "options" field
-- NO "explanation" field
-- NO links, URLs, or references to external resources
-- NO videos or multimedia references
-- NO long paragraphs or detailed explanations
-- ONLY "question" and "answer" fields
-
-BEFORE SENDING YOUR RESPONSE:
-
-- Check: Does it start with [ ?
-- Check: Does it end with ] ?
-- Check: No text before [ or after ] ?
-- Check: All commas in correct places?
-- Check: No trailing commas?
-- Check: All quotes properly closed?
-- Check: Each object has ONLY "question" and "answer" fields?
-- Check: No extra fields like id, difficulty, importance, etc.?
-- Check: Answers are DETAILED enough (40-60 words)?
-- Check: Exactly ${expectedNotes} notes 
-
-REMEMBER: If your JSON has ANY syntax error, the entire batch fails and is skipped. Make it PERFECT.
+Must be valid JSON
+Must start with [
+Must end with ]
+No trailing commas
+Properly closed quotes and brackets
+Exactly ${expectedNotes} entries
 
 TEXT TO ANALYZE:
 `;
@@ -272,7 +180,9 @@ async function initializeBrowser() {
         '--start-maximized',
         '--disable-blink-features=AutomationControlled',
         '--no-sandbox',
-        '--disable-setuid-sandbox'
+        '--disable-setuid-sandbox',
+        '--lang=en-US,en',
+        '--disable-features=TranslateUI'
       ]
     };
     try {
@@ -293,6 +203,9 @@ async function initializeBrowser() {
     }
 
     page = await browser.newPage();
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9'
+    });
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });

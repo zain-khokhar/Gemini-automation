@@ -8,10 +8,13 @@ const readline = require('readline');
     // executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     userDataDir: './session',
     defaultViewport: null,
-    args: ['--start-maximized', '--disable-blink-features=AutomationControlled']
+    args: ['--start-maximized', '--disable-blink-features=AutomationControlled', '--lang=en-US,en', '--disable-features=TranslateUI']
   });
 
   const page = await browser.newPage();
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'en-US,en;q=0.9'
+  });
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
   });

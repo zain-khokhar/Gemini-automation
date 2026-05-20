@@ -4,11 +4,12 @@ Handles intelligent folder organization for JSON output files
 """
 
 import re
+import json
 from pathlib import Path
 from typing import Optional
 
-# Main organized output directory
-ORGANIZED_BASE_DIR = str(Path.home() / "Documents" / "vu-all-JSON")
+# Default organized output directory
+DEFAULT_ORGANIZED_BASE_DIR = str(Path.home() / "Documents" / "vu-all-JSON")
 
 # Predefined subject codes
 PREDEFINED_SUBJECTS = [
@@ -16,6 +17,28 @@ PREDEFINED_SUBJECTS = [
     'ENG', 'ETH', 'FIN', 'GSC', 'HRM', 'ISL', 'IT', 'MCD', 'MCM', 'MGMT',
     'MGT', 'MKT', 'MTH', 'PAD', 'PAK', 'PHY', 'PSC', 'SOC', 'STA', 'URD', 'ZOO'
 ]
+
+
+def get_json_output_root() -> str:
+    """
+    Get the JSON output root directory from config.
+    Falls back to default if not configured.
+    
+    Returns:
+        Path string to the output root directory
+    """
+    try:
+        config_path = Path(__file__).parent / 'config.json'
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            custom_root = config.get('json_output_root', '').strip()
+            if custom_root and Path(custom_root).exists():
+                return custom_root
+    except Exception:
+        pass
+    
+    return DEFAULT_ORGANIZED_BASE_DIR
 
 
 def extract_subject_code(pdf_name: str) -> Optional[str]:
@@ -36,12 +59,10 @@ def extract_subject_code(pdf_name: str) -> Optional[str]:
         Subject code if found, None otherwise
     """
     # Try to match pattern: letters followed by numbers
-    # This handles cases like CS101, MGT101, MGMT301, etc.
     match = re.match(r'^([A-Z]+)\d+', pdf_name.upper())
     
     if match:
         subject_code = match.group(1)
-        # Check if it's in our predefined list
         if subject_code in PREDEFINED_SUBJECTS:
             return subject_code
     
@@ -55,7 +76,7 @@ def get_organized_path(pdf_name: str, pdf_source_path: str) -> Path:
     Logic:
     1. Extract subject code from PDF name
     2. If subject code matches predefined list:
-       Return organized path under vu-all-JSON folder
+       Return organized path under configured JSON output root
     3. If subject code doesn't match:
        Return path in same directory as source PDF
     
@@ -67,10 +88,10 @@ def get_organized_path(pdf_name: str, pdf_source_path: str) -> Path:
         Path object for the organized output directory
     """
     subject_code = extract_subject_code(pdf_name)
+    base_dir = get_json_output_root()
     
     if subject_code:
-        # Organized path: ORGANIZED_BASE_DIR/SUBJECT/PDF_NAME/
-        organized_path = Path(ORGANIZED_BASE_DIR) / subject_code / pdf_name
+        organized_path = Path(base_dir) / subject_code / pdf_name
         print(f"📂 Using organized path: {organized_path}")
         print(f"   Subject: {subject_code}")
         return organized_path
@@ -81,3 +102,43 @@ def get_organized_path(pdf_name: str, pdf_source_path: str) -> Path:
         print(f"📂 Subject not recognized, using fallback path: {fallback_path}")
         return fallback_path
 
+
+def scan_root_folder(root_path: str) -> dict:
+    """
+    Scan a root folder for subfolders containing PDFs.
+    
+    Args:
+        root_path: Path to the root folder
+    
+    Returns:
+        Dictionary with:
+        - 'categories': {subfolder_name: [list of pdf paths]}
+        - 'all_pdfs': [flat list of all pdf paths]
+        - 'total': total PDF count
+    """
+    root = Path(root_path)
+    if not root.exists():
+        return {'categories': {}, 'all_pdfs': [], 'total': 0}
+    
+    categories = {}
+    all_pdfs = []
+    
+    # Check root level PDFs
+    root_pdfs = sorted([str(f) for f in root.glob('*.pdf')])
+    if root_pdfs:
+        categories['Root'] = root_pdfs
+        all_pdfs.extend(root_pdfs)
+    
+    # Check subfolders
+    for subfolder in sorted(root.iterdir()):
+        if subfolder.is_dir():
+            pdfs = sorted([str(f) for f in subfolder.glob('*.pdf')])
+            if pdfs:
+                categories[subfolder.name] = pdfs
+                all_pdfs.extend(pdfs)
+    
+    return {
+        'categories': categories,
+        'all_pdfs': all_pdfs,
+        'total': len(all_pdfs)
+    }
