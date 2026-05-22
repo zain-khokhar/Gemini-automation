@@ -401,7 +401,11 @@ def _escape(text: str) -> str:
 
 def scan_json_files(root_path: str) -> List[Dict[str, str]]:
     """
-    Scan a directory recursively for JSON files.
+    Scan a directory recursively for MCQ/Short Notes JSON files ONLY.
+    
+    IMPORTANT: This function EXCLUDES review files (reviews_*.json, reviews.json)
+    from the scan results. Reviews have their own dedicated storage and should
+    NEVER appear in the PDF generation list.
     
     Args:
         root_path: Root directory to scan
@@ -416,13 +420,23 @@ def scan_json_files(root_path: str) -> List[Dict[str, str]]:
         return results
     
     for json_file in root.rglob('*.json'):
-        # Determine type from filename
         name = json_file.stem
+        filename_lower = json_file.name.lower()
+        
+        # ─── EXCLUSION: Skip review files ───────────────────────
+        # Review files use patterns: reviews.json, reviews_mids.json, reviews_finals.json, etc.
+        # These should NEVER be included in PDF generation search results.
+        if filename_lower.startswith('reviews'):
+            continue
+        
+        # Determine type from filename
         if 'short note' in name.lower() or 'short_note' in name.lower():
             content_type = 'Short Notes'
         elif 'mcq' in name.lower():
             content_type = 'MCQs'
         else:
+            # Skip unknown JSON files that are not MCQs or Short Notes
+            # This prevents config files, state files, etc. from appearing
             content_type = 'Unknown'
         
         # Category from parent folders

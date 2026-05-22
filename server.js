@@ -72,91 +72,204 @@ function delay(ms) {
 // SYSTEM PROMPTS
 // ============================================================
 
-function generateSystemPrompt(expectedMcqs = 10) {
+function generateSystemPrompt(expectedMcqs = 20, reviewTopics = []) {
+  // Build the review topics section ONLY if reviews are provided
+  let reviewSection = '';
+  if (reviewTopics && reviewTopics.length > 0) {
+    const topicsList = reviewTopics.map((t, i) => `  ${i + 1}. ${t}`).join('\n');
+    reviewSection = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  MANDATORY REVIEW TOPICS — YOU MUST READ AND USE THESE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The following ${reviewTopics.length} topics are REAL past paper topics from actual VU exams, submitted by students.
+These are NOT suggestions — they are MANDATORY exam intelligence that you MUST use.
+
+YOUR INSTRUCTIONS:
+1. READ every single topic below carefully
+2. ANALYZE which topics relate to the content in this batch
+3. For EACH matching topic, generate exactly 2 MCQs covering that exact concept from different angles.
+4. Focus on definitions, comparisons, applications, and conceptual depth for each matching topic.
+5. The REMAINING MCQs (to reach your minimum target) should come from other important and conceptual areas in the text that are NOT covered in the reviews.
+6. These review-based MCQs are CRITICAL for exam prediction — do NOT skip any matching topic.
+
+REVIEW TOPICS:
+${topicsList}
+
+CALCULATION FOR TOTAL MCQS:
+- Generate 2 MCQs for each matching review topic.
+- If the total MCQs from review topics is LESS than ${expectedMcqs}, generate additional MCQs from other conceptual areas to reach exactly ${expectedMcqs} total MCQs.
+- If the total MCQs from review topics is EQUAL TO or GREATER than ${expectedMcqs}, you do NOT need to generate MCQs from other areas. Just output the review-based MCQs.
+- If NO topics match the batch content → still generate exactly ${expectedMcqs} MCQs from other conceptual areas.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+  }
+
   return `You are an expert MCQ generator for Virtual University students preparing for mids and finals exams.
 
-Generate EXACTLY ${expectedMcqs} unique MCQs from the given text/topic.
+TOTAL REQUIREMENT: You MUST generate AT LEAST ${expectedMcqs} MCQs in total. It should work in a balanced way: generate 2 MCQs per matching review topic, and the remaining MCQs (if any needed to reach ${expectedMcqs}) should come from other important and conceptual areas not covered in the reviews.
 
-PRIORITY:
-
-Prefer VU past paper questions from 2023-2025
-Focus on frequently repeated concepts
-If past paper data is unavailable, generate important conceptual MCQs
-
-RULES:
-
+PRIORITY ORDER:
+1. Prefer VU past paper questions from 2023-2025
+2. Focus on frequently repeated and conceptually important topics
+3. Always cover the most exam-relevant content from the provided text
+${reviewSection}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Response MUST be valid JSON parseable by JSON.parse()
-Respond ONLY with a JSON array
-No markdown, no code blocks, no explanations, no extra text
-First character must be [ and last character must be ]
+Respond with your JSON inside a JSON code block like:
+\`\`\`json
+[...your JSON array here...]
+\`\`\`
+No explanations or extra text outside the code block
 Never repeat questions or concepts
 Each question must be short and clear
 Each MCQ must contain exactly 4 options
 
 CORRECT JSON FORMAT:
-
+\`\`\`json
 [{"question":"What is virtual storage?","options":["RAM extension","Disk-based memory","Cache memory","ROM type"],"correct":"Disk-based memory","explanation":"Virtual storage uses disk space as extended memory."},{"question":"What is cache memory?","options":["Fast memory","Slow memory","Disk storage","Network storage"],"correct":"Fast memory","explanation":"Cache is high-speed memory close to CPU."}]
+\`\`\`
 
 REQUIRED FIELDS (ALL MANDATORY):
-
 question: string (SHORT, 15-20 words max)
 options: array of EXACTLY 4 strings (each option 2-8 words)
 correct: string (MUST match one option EXACTLY)
 explanation: string (brief, 1-2 sentences)
 
-REMEMBER: If your JSON has ANY syntax error, the entire batch fails and is skipped. Make it PERFECT.
+REMEMBER: If your JSON has ANY syntax error, the entire batch fails. Make it PERFECT.
+REMEMBER: MINIMUM ${expectedMcqs} MCQs is NON-NEGOTIABLE. Always deliver at least ${expectedMcqs}.
 
 TEXT TO ANALYZE:
 `;
 }
 
-function generateShortNotesPrompt(expectedNotes = 10) {
-  return `You are an expert academic note generator for Virtual University students preparing for exams.
+function generateShortNotesPrompt(expectedNotes = 20, reviewTopics = []) {
+  let reviewSection = '';
 
-Generate EXACTLY ${expectedNotes} high-quality short notes from the provided text/topic.
+  if (reviewTopics && reviewTopics.length > 0) {
+    const topicsList = reviewTopics.map((t, i) => `  ${i + 1}. ${t}`).join('\n');
 
-OUTPUT RULES:
+    reviewSection = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ MANDATORY REVIEW TOPICS (EXAM INTELLIGENCE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Respond ONLY with a valid JSON array
-No markdown, no code blocks, no extra text before or after
-Output must be directly parseable by JSON.parse()
-First character must be [ and last character must be ]
+REVIEW TOPICS:
+${topicsList}
 
-CONTENT REQUIREMENTS:
+STRICT REVIEW MATCHING RULES:
+1. First, identify ONLY the review topics that are a direct/strong match with the PDF content.
+2. If a review topic is not clearly supported by the PDF, ignore it completely.
+3. For EACH matched review topic, generate EXACTLY 2 short notes.
+4. Review-based notes must come first in the output.
+5. After review notes, generate ONLY important conceptual notes from the PDF.
+6. Conceptual notes must be high-probability, exam-relevant, and non-repetitive.
+7. If review topics match, generate at most 5 conceptual notes.
+8. If no review topics match, generate at most ${expectedNotes} total notes.
 
-Focus on important exam concepts, logic, processes, and relationships
-Prefer “Why”, “How”, “Differentiate”, and “Explain significance” type questions
-Avoid simple memorization questions unless concept is essential
-Ensure strong conceptual depth and exam relevance
-Explanations must feel like a top-level expert (genius-level clarity), making the concept fully intuitive and permanently understandable for a student
+COUNT CONTROL:
+- Matched review topic = exactly 2 notes each
+- Conceptual notes = 0 to 5 only when review matches exist
+- HARD CAP:
+  - If no review matches → MAX ${expectedNotes} total notes
+  - If review matches exist → MAX (matchedReviewTopics × 2) + 5 total notes
 
-FORMAT:
-Each item must follow this structure exactly:
-{
-"question": "Clear question (10 to 20 words)",
-"answer": "Detailed explanation (40 to 60 words, 3 to 5 sentences)"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+  }
+
+  return `You are an expert academic short-note generator for Virtual University students.
+
+CORE RULE:
+- If no review topics match the PDF, generate at most ${expectedNotes} short notes total.
+- If review topics match the PDF, generate exactly 2 short notes per matched review topic, then add at most 5 conceptual notes.
+
+PRIORITY ORDER:
+1. Review topics (only if they match the PDF)
+2. High-probability exam concepts
+3. Important conceptual explanations (Why / How / Differences)
+
+${reviewSection}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Return ONLY valid JSON:
+
+\`\`\`json
+[
+  {
+    "question": "string (short and clear)",
+    "answer": "string (concise explanation)"
+  }
+]
+\`\`\`
+
+STRICT RULES:
+- No duplicates
+- No rewording same idea
+- No forced review usage
+- Do not invent topics outside the PDF
+- Keep answers concise and exam-focused
+- Respect the hard cap exactly
+
+TEXT TO ANALYZE:
+`;
 }
+
+function generateReviewStructuringPrompt() {
+  return `You are an expert data structuring assistant for Virtual University course reviews.
+
+Your task is to extract and structure student reviews from the raw, unstructured text provided below.
+
+The input text may contain:
+- Reviews in multiple languages (Urdu, Roman Urdu, English, etc.)
+- Unrelated text mixed in with the reviews
+- Multiple reviews for different subjects
+- Duplicate reviews
 
 RULES:
 
-Exactly ${expectedNotes} items
-No repetition of ideas or questions
-Questions must be clear and exam-oriented
-Answers must be complete, highly clear, and conceptually deep
-No extra fields (no id, no difficulty, no source, no importance)
-No links, URLs, or references
-Each object must contain ONLY "question" and "answer"
+1. Extract ONLY actual student reviews about courses/subjects
+2. Ignore any unrelated text that is not a review
+3. Translate ALL reviews into clear, natural English
+4. Extract the subject/course code (e.g., MGT501, CS101, ENG201) from each review's context
+5. Extract the review date if mentioned in the text, otherwise set to null
+6. If the current batch contains 100% duplicate reviews, ignore duplicates and keep only ONE unique structured review
+7. Return the result inside a JSON code block
 
-VALIDATION CHECK:
+OUTPUT FORMAT:
 
-Must be valid JSON
-Must start with [
-Must end with ]
-No trailing commas
-Properly closed quotes and brackets
-Exactly ${expectedNotes} entries
+Respond with your JSON inside a JSON code block like:
+\`\`\`json
+[
+  {
+    "subject_code": "MGT501",
+    "review": "The exact review text translated to English",
+    "review_date": "2024-03-15"
+  },
+  {
+    "subject_code": "CS101",
+    "review": "Another review translated to English",
+    "review_date": null
+  }
+]
+\`\`\`
 
-TEXT TO ANALYZE:
+REQUIRED FIELDS (ALL MANDATORY):
+
+subject_code: string (e.g., "MGT501", "CS101", "ENG201")
+review: string (the review translated to English, preserve original meaning)
+review_date: string or null (date in YYYY-MM-DD format if available, null otherwise)
+
+IMPORTANT:
+- Do NOT add any extra fields
+- Do NOT include reviews that are just greetings or unrelated messages
+- Keep the translation accurate and natural
+- If you cannot determine the subject code, use "UNKNOWN"
+
+RAW TEXT TO PROCESS:
 `;
 }
 
@@ -324,8 +437,9 @@ app.post('/api/send-prompt', async (req, res) => {
   const requestId = Date.now();
 
   try {
-    const { text, section, expected_mcqs, content_type } = req.body;
+    const { text, section, expected_mcqs, content_type, review_topics } = req.body;
     const expectedMcqs = expected_mcqs || 10;
+    const reviews = Array.isArray(review_topics) ? review_topics : [];
 
     if (!text) {
       return res.status(400).json({ success: false, error: 'Text is required' });
@@ -362,11 +476,16 @@ app.post('/api/send-prompt', async (req, res) => {
     // Increment premium counter
     const counter = incrementRequestCounter();
 
-    // Generate system prompt
+    // Generate system prompt — reviews are embedded DIRECTLY into the system prompt
     const ct = content_type || 'mcq';
-    const systemPrompt = ct === 'short_notes'
-      ? generateShortNotesPrompt(expectedMcqs)
-      : generateSystemPrompt(expectedMcqs);
+    let systemPrompt;
+    if (ct === 'reviews') {
+      systemPrompt = generateReviewStructuringPrompt();
+    } else if (ct === 'short_notes') {
+      systemPrompt = generateShortNotesPrompt(expectedMcqs, reviews);
+    } else {
+      systemPrompt = generateSystemPrompt(expectedMcqs, reviews);
+    }
 
     const fullPrompt = systemPrompt + '\n\n' + text;
 
@@ -374,6 +493,7 @@ app.post('/api/send-prompt', async (req, res) => {
     console.log(`[${requestId}] Sending prompt to Gemini`);
     console.log(`[${requestId}] Section: ${section || 'unknown'}, Type: ${ct}, Expected: ${expectedMcqs}`);
     console.log(`[${requestId}] Text: ${text.length} chars, Prompt: ${fullPrompt.length} chars`);
+    console.log(`[${requestId}] Review topics embedded: ${reviews.length}`);
     console.log(`[${requestId}] Premium today: ${counter.count}/100`);
     console.log('='.repeat(60));
 

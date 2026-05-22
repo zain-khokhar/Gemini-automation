@@ -84,15 +84,34 @@ class BatchProcessingThread(QThread):
         self.current_json_manager = None
         self.request_count = 0
         
+        # Current batch data for repeat functionality
+        self._current_batch_text = None
+        self._current_batch_section = None
+        self._current_batch_content_type = None
+        self._current_batch_review_topics = []
+        
+        # Reviews context flags
+        self.use_reviews_for_mcq = False
+        self.use_reviews_for_notes = False
+        
+        # Reviews category to use (matches selected section: 'mids', 'finals', or custom)
+        self.review_category = 'uncategorized'
+        
         # Manual input synchronization
         self._input_event = threading.Event()
         self._skip_event = threading.Event()
+        self._repeat_event = threading.Event()
         self._input_json = None  # Stores the JSON text submitted by user
         self._input_source = None  # 'extract' or 'manual'
     
     def skip_current_batch(self):
         """Skip the current batch when stuck on invalid JSON"""
         self._skip_event.set()
+        self._input_event.set()  # Unblock wait
+
+    def repeat_current_batch(self):
+        """Repeat the current batch by re-sending the same prompt to Gemini"""
+        self._repeat_event.set()
         self._input_event.set()  # Unblock wait
         
     def stop(self):
@@ -140,9 +159,11 @@ class BatchProcessingThread(QThread):
         
         Returns:
             Raw JSON text string, or None if stopped/skipped
+            Special: returns '__REPEAT__' if user requested repeat
         """
         self._input_event.clear()
         self._skip_event.clear()
+        self._repeat_event.clear()
         self._input_json = None
         self._input_source = None
         
@@ -156,8 +177,12 @@ class BatchProcessingThread(QThread):
                 return None
             self._input_event.wait(timeout=0.5)
         
-        if self.should_stop or self._skip_event.is_set():
+        if self.should_stop:
             return None
+        if self._skip_event.is_set():
+            return None
+        if self._repeat_event.is_set():
+            return '__REPEAT__'
         
         source_label = "extracted" if self._input_source == 'extract' else "manual paste"
         self.log_signal.emit(f"   📥 JSON received via {source_label} ({len(self._input_json or '')} chars)", "info")
@@ -272,13 +297,54 @@ class BatchProcessingThread(QThread):
                                         self.log_signal.emit(f"🔄 Auto-reset after {self.request_count} requests...", "info")
                                         self.client.reset_chat()
                                     
-                                    # Step 1: Send prompt to Gemini
+                                    # Step 1: Build prompt text with review topics sent separately
+                                    # Reviews are extracted as raw topic lists and passed to the server
+                                    # via the review_topics parameter. The server embeds them DIRECTLY
+                                    # into the system prompt so the model MUST read and analyze them.
+                                    #
+                                    # Logic:
+                                    #   - mids section  → mids reviews  (reviews_mids.json)
+                                    #   - finals section → finals reviews (reviews_finals.json)
+                                    prompt_text = batch['text']
+                                    review_topics_list = []
+                                    
+                                    # Determine if reviews should be fetched based on UI checkbox flags
+                                    should_use_reviews = (
+                                        (content_type == 'mcq' and self.use_reviews_for_mcq) or
+                                        (content_type == 'short_notes' and self.use_reviews_for_notes)
+                                    )
+                                    
+                                    if should_use_reviews:
+                                        try:
+                                            from reviews_manager import get_raw_review_topics
+                                            from folder_organizer import extract_full_subject_code
+                                            subj = extract_full_subject_code(pdf_basename)
+                                            if subj and subj != 'MISC':
+                                                # Auto-select review category to match the section being processed
+                                                review_cat = section  # 'mids' or 'finals'
+                                                review_topics_list = get_raw_review_topics(subj, category=review_cat)
+                                                if review_topics_list:
+                                                    content_label_log = "MCQ" if content_type == 'mcq' else "notes"
+                                                    self.log_signal.emit(f"   📝 [{review_cat.upper()}] {len(review_topics_list)} review topics will be embedded in system prompt for {subj} ({content_label_log})", "info")
+                                                else:
+                                                    self.log_signal.emit(f"   ℹ️ No {section} reviews found for {subj} — proceeding without reviews", "info")
+                                        except Exception as e:
+                                            self.log_signal.emit(f"   ⚠️ Reviews extraction failed: {str(e)}", "warning")
+
                                     self.log_signal.emit("   📤 Sending to Gemini...", "info")
+                                    
+                                    # Store current batch data for repeat
+                                    self._current_batch_text = prompt_text
+                                    self._current_batch_section = section
+                                    self._current_batch_content_type = content_type
+                                    self._current_batch_review_topics = review_topics_list
+                                    
                                     self.client.send_prompt(
-                                        batch['text'],
+                                        prompt_text,
                                         section=section,
                                         pages_count=batch['page_count'],
-                                        content_type=content_type
+                                        content_type=content_type,
+                                        review_topics=review_topics_list
                                     )
                                     self.log_signal.emit("   ✓ Prompt sent — waiting for your input", "success")
                                     
@@ -296,6 +362,23 @@ class BatchProcessingThread(QThread):
                                             if self._skip_event.is_set():
                                                 self.log_signal.emit("   ⏭️ Batch skipped by user", "warning")
                                             break
+                                        
+                                        # Handle repeat request
+                                        if raw_json == '__REPEAT__':
+                                            self.log_signal.emit("   🔄 Repeating batch — re-sending prompt...", "info")
+                                            if self._current_batch_text:
+                                                try:
+                                                    self.client.send_prompt(
+                                                        self._current_batch_text,
+                                                        section=self._current_batch_section or section,
+                                                        pages_count=batch['page_count'],
+                                                        content_type=self._current_batch_content_type or content_type,
+                                                        review_topics=self._current_batch_review_topics
+                                                    )
+                                                    self.log_signal.emit("   ✓ Prompt re-sent — waiting for your input", "success")
+                                                except Exception as e:
+                                                    self.log_signal.emit(f"   ❌ Repeat failed: {str(e)}", "error")
+                                            continue
                                             
                                         # Step 3: Parse and validate JSON
                                         try:

@@ -37,7 +37,8 @@ class GeminiClient:
             return False
     
     def send_prompt(self, text: str, section: str = 'unknown',
-                    pages_count: int = 5, content_type: str = 'mcq') -> dict:
+                    pages_count: int = 5, content_type: str = 'mcq',
+                    review_topics: list = None) -> dict:
         """
         Send prompt to Gemini via the server. Returns immediately after sending.
         Does NOT wait for Gemini to generate the response.
@@ -47,6 +48,9 @@ class GeminiClient:
             section: Section name (mids/finals)
             pages_count: Number of pages in this batch
             content_type: 'mcq' or 'short_notes'
+            review_topics: List of review topic strings to embed in system prompt.
+                          These get injected directly into the system prompt so the
+                          model MUST read and use them. Pass None or [] if no reviews.
         
         Returns:
             Server response dict with success status
@@ -57,17 +61,24 @@ class GeminiClient:
         expected_mcqs = pages_count * 2
         content_label = "MCQs" if content_type == 'mcq' else "Short Notes"
         
-        print(f"  → Sending prompt to Gemini ({pages_count} pages, {expected_mcqs} {content_label})...")
+        review_count = len(review_topics) if review_topics else 0
+        print(f"  → Sending prompt to Gemini ({pages_count} pages, {expected_mcqs} {content_label}, {review_count} review topics)...")
         
         try:
+            payload = {
+                'text': text,
+                'section': section,
+                'expected_mcqs': expected_mcqs,
+                'content_type': content_type
+            }
+            
+            # Only include reviews if we have them
+            if review_topics and len(review_topics) > 0:
+                payload['review_topics'] = review_topics
+            
             response = self.session.post(
                 f"{self.server_url}/api/send-prompt",
-                json={
-                    'text': text,
-                    'section': section,
-                    'expected_mcqs': expected_mcqs,
-                    'content_type': content_type
-                },
+                json=payload,
                 timeout=30  # Short timeout — we're just sending, not waiting
             )
             
@@ -86,7 +97,8 @@ class GeminiClient:
             if response.status_code != 200 or not data.get('success'):
                 raise Exception(f"Send failed: {data.get('error', 'Unknown error')}")
             
-            print(f"  ✓ Prompt sent successfully ({data.get('promptLength', '?')} chars)")
+            reviews_msg = f", {review_count} reviews embedded" if review_count > 0 else ""
+            print(f"  ✓ Prompt sent successfully ({data.get('promptLength', '?')} chars{reviews_msg})")
             return data
             
         except requests.exceptions.Timeout:

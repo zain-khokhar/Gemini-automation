@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QScrollArea, QSizePolicy, QComboBox, QListWidget,
     QListWidgetItem, QCheckBox, QTabWidget, QMessageBox,
     QAbstractItemView, QSplitter, QTableWidget, QTableWidgetItem,
-    QHeaderView, QToolButton, QGroupBox, QDialog
+    QHeaderView, QToolButton, QGroupBox, QDialog, QPlainTextEdit
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QTextCursor, QColor, QIcon, QPalette
@@ -417,6 +417,7 @@ class ProcessingTab(QWidget):
         self.all_pdfs = []           # flat list of all PDF paths
         self.filtered_pdfs = []      # currently shown in list
         self.categories = {}         # {category_name: [pdf_paths]}
+        self.index_map = {}          # {pdf_path: stable_id} e.g., CS01, MCM02
         self._build_ui()
         self._load_root_folder_from_config()
         self._load_last_state()
@@ -501,11 +502,11 @@ class ProcessingTab(QWidget):
 
         # ── PDF list ──────────────────────────────────────────
         self.pdf_table = QTableWidget(0, 3)
-        self.pdf_table.setHorizontalHeaderLabels(["#", "PDF Name", "Category"])
+        self.pdf_table.setHorizontalHeaderLabels(["#", "PDF NAME", "CATEGORY"])
         self.pdf_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.pdf_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.pdf_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        self.pdf_table.setColumnWidth(0, 44)
+        self.pdf_table.setColumnWidth(0, 80)
         self.pdf_table.setColumnWidth(2, 120)
         self.pdf_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.pdf_table.setAlternatingRowColors(True)
@@ -528,16 +529,16 @@ class ProcessingTab(QWidget):
 
         # Index selection card
         sel_card, sel_layout = make_card('v', (14, 12, 14, 12), 6)
-        sel_layout.addWidget(label_secondary("Process (by index)"))
+        sel_layout.addWidget(label_secondary("Process (by ID or index)"))
 
         sel_input_row = QHBoxLayout()
         self.selection_input = QLineEdit()
-        self.selection_input.setPlaceholderText("e.g. 1,3,5 or 1-5 or empty for all")
+        self.selection_input.setPlaceholderText("e.g. CS01,CS03 or 1-5 or empty for all")
         self.selection_input.setMinimumHeight(32)
         sel_input_row.addWidget(self.selection_input)
         sel_layout.addLayout(sel_input_row)
 
-        hint = label_muted("Leave empty to process all visible PDFs")
+        hint = label_muted("Use stable IDs (CS01, MCM02) or numeric indexes. Leave empty for all.")
         sel_layout.addWidget(hint)
         settings_row.addWidget(sel_card, 2)
 
@@ -562,6 +563,14 @@ class ProcessingTab(QWidget):
         self.notes_check = QCheckBox("Short Notes")
         content_layout.addWidget(self.mcq_check)
         content_layout.addWidget(self.notes_check)
+        content_layout.addWidget(divider())
+        content_layout.addWidget(label_secondary("Reviews Context"))
+        self.mcq_reviews_check = QCheckBox("Use reviews for MCQs")
+        self.notes_reviews_check = QCheckBox("Use reviews for Notes")
+        self.mcq_reviews_check.setToolTip("Include student reviews in MCQ generation prompts for better relevance")
+        self.notes_reviews_check.setToolTip("Include student reviews in Short Notes generation prompts for better relevance")
+        content_layout.addWidget(self.mcq_reviews_check)
+        content_layout.addWidget(self.notes_reviews_check)
         settings_row.addWidget(content_card, 1)
 
         root_layout.addLayout(settings_row)
@@ -715,10 +724,11 @@ class ProcessingTab(QWidget):
         extract_row = QHBoxLayout()
         extract_row.setSpacing(8)
 
-        self.extract_btn = QPushButton("Extract from Chat")
-        self.extract_btn.setMinimumHeight(32)
-        self.extract_btn.setEnabled(False)
-        self.extract_btn.clicked.connect(self._on_extract)
+        self.repeat_btn = QPushButton("Repeat Batch")
+        self.repeat_btn.setMinimumHeight(32)
+        self.repeat_btn.setEnabled(False)
+        self.repeat_btn.setToolTip("Re-send the same prompt for the current batch to Gemini")
+        self.repeat_btn.clicked.connect(self._on_repeat)
 
         self.skip_btn = QPushButton("Skip Batch")
         self.skip_btn.setObjectName("warning")
@@ -726,8 +736,25 @@ class ProcessingTab(QWidget):
         self.skip_btn.setEnabled(False)
         self.skip_btn.clicked.connect(self._on_skip)
 
-        extract_row.addWidget(self.extract_btn)
+        # Reviews info badge
+        self.reviews_badge = QPushButton("📝 Reviews: —")
+        self.reviews_badge.setMinimumHeight(32)
+        self.reviews_badge.setEnabled(False)
+        self.reviews_badge.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_muted']};
+                font-size: 9pt;
+                padding: 4px 12px;
+            }}
+        """)
+        self.reviews_badge.setToolTip("Shows review availability for current subject")
+
+        extract_row.addWidget(self.repeat_btn)
         extract_row.addWidget(self.skip_btn)
+        extract_row.addWidget(self.reviews_badge)
         extract_row.addStretch()
         manual_layout.addLayout(extract_row)
 
@@ -735,11 +762,11 @@ class ProcessingTab(QWidget):
         sep_lbl.setAlignment(Qt.AlignCenter)
         manual_layout.addWidget(sep_lbl)
 
-        self.json_paste = QTextEdit()
+        self.json_paste = QPlainTextEdit()
         self.json_paste.setPlaceholderText("Paste JSON from Gemini here...")
         self.json_paste.setMaximumHeight(110)
         self.json_paste.setStyleSheet(f"""
-            QTextEdit {{
+            QPlainTextEdit {{
                 background: {PALETTE['bg']};
                 font-family: 'Consolas', 'Courier New', monospace;
                 font-size: 9.5pt;
@@ -829,10 +856,14 @@ class ProcessingTab(QWidget):
             self._load_pdfs_from_root(folder)
 
     def _load_pdfs_from_root(self, root_path):
+        from folder_organizer import build_index_map
         result = scan_root_folder(root_path)
         self.all_pdfs = result['all_pdfs']
         self.categories = result['categories']
         total = result['total']
+
+        # Build stable index map for permanent IDs (CS01, MCM02, etc.)
+        self.index_map = build_index_map(self.all_pdfs)
 
         # Populate category combo
         self.category_combo.blockSignals(True)
@@ -872,15 +903,18 @@ class ProcessingTab(QWidget):
 
         self.filtered_pdfs = pool
 
-        # Populate table
+        # Populate table with stable IDs
         self.pdf_table.setRowCount(0)
         for i, pdf_path in enumerate(pool, 1):
             row = self.pdf_table.rowCount()
             self.pdf_table.insertRow(row)
 
-            idx_item = QTableWidgetItem(str(i))
+            # Use stable ID from index_map (e.g., CS01, MCM02)
+            stable_id = self.index_map.get(pdf_path, str(i))
+            idx_item = QTableWidgetItem(stable_id)
             idx_item.setTextAlignment(Qt.AlignCenter)
-            idx_item.setForeground(QColor(PALETTE['text_muted']))
+            idx_item.setForeground(QColor(PALETTE['accent']))
+            idx_item.setData(Qt.UserRole, stable_id)  # Store stable ID for parsing
 
             name_item = QTableWidgetItem(Path(pdf_path).name)
             name_item.setData(Qt.UserRole, pdf_path)
@@ -902,23 +936,95 @@ class ProcessingTab(QWidget):
         self.pdf_count_label.setText(f"{len(pool)} PDFs")
 
     def _parse_selection(self, selection_str, total):
+        """
+        Parse selection string supporting both stable IDs (CS01, MCM02) and numeric indexes.
+        
+        IMPORTANT: Stable IDs are looked up against the FULL index_map (all PDFs),
+        not just the currently filtered/visible PDFs. This allows users to type
+        IDs like CS02,ENG01 even when the list is filtered to show only one category.
+        The selected PDFs are then processed from the global all_pdfs list.
+        
+        Numeric indexes (1, 2, 3...) refer to the position in the currently filtered list.
+        """
         if not selection_str.strip():
             return list(range(1, total + 1))
+
+        # Build TWO reverse maps:
+        # 1. From FILTERED list (for numeric index resolution)
+        filtered_pos_map = {}
+        for i, pdf_path in enumerate(self.filtered_pdfs, 1):
+            stable_id = self.index_map.get(pdf_path, str(i))
+            filtered_pos_map[stable_id.upper()] = i
+
+        # 2. From ALL PDFs (for stable ID resolution regardless of current filter)
+        # Maps stable_id -> pdf_path for global lookup
+        global_id_to_path = {}
+        for pdf_path, stable_id in self.index_map.items():
+            global_id_to_path[stable_id.upper()] = pdf_path
+
+        # Build a path-to-filtered-position map for cross-referencing
+        path_to_filtered_pos = {pdf_path: i for i, pdf_path in enumerate(self.filtered_pdfs, 1)}
+
         try:
             indexes = set()
             for part in selection_str.split(','):
                 part = part.strip()
+                if not part:
+                    continue
+
+                upper_part = part.upper()
+
+                # Check if it's a stable ID (e.g., CS01, MCM02)
+                if upper_part in global_id_to_path:
+                    pdf_path = global_id_to_path[upper_part]
+                    # If this PDF is in the current filtered view, use its filtered position
+                    if pdf_path in path_to_filtered_pos:
+                        indexes.add(path_to_filtered_pos[pdf_path])
+                    else:
+                        # PDF exists globally but not in current filter —
+                        # add it directly to processing by appending to filtered_pdfs temporarily
+                        # We do this by adding it as a special "extra" index beyond the filtered list
+                        # Actually: just add the path directly via a different mechanism.
+                        # Simplest fix: add it to the filtered_pdfs temporarily for this parse session
+                        self.filtered_pdfs.append(pdf_path)
+                        indexes.add(len(self.filtered_pdfs))
+                        path_to_filtered_pos[pdf_path] = len(self.filtered_pdfs)
+                    continue
+
+                # Check for ID range (e.g., CS01-CS05)
                 if '-' in part:
-                    a, b = part.split('-')
-                    a, b = int(a.strip()), int(b.strip())
-                    if a < 1 or b > total or a > b:
-                        raise ValueError(f"Invalid range: {part}")
-                    indexes.update(range(a, b + 1))
+                    a_str, b_str = part.split('-', 1)
+                    a_str, b_str = a_str.strip(), b_str.strip()
+
+                    # Try as stable ID range
+                    a_upper, b_upper = a_str.upper(), b_str.upper()
+                    if a_upper in filtered_pos_map and b_upper in filtered_pos_map:
+                        a_pos, b_pos = filtered_pos_map[a_upper], filtered_pos_map[b_upper]
+                        if a_pos <= b_pos:
+                            indexes.update(range(a_pos, b_pos + 1))
+                            continue
+
+                    # Try as numeric range
+                    try:
+                        a, b = int(a_str), int(b_str)
+                        if a < 1 or b > total or a > b:
+                            raise ValueError(f"Invalid range: {part}")
+                        indexes.update(range(a, b + 1))
+                        continue
+                    except ValueError:
+                        pass
+
+                    raise ValueError(f"Invalid range: {part}")
                 else:
-                    n = int(part)
-                    if n < 1 or n > total:
-                        raise ValueError(f"Index {n} out of range")
-                    indexes.add(n)
+                    # Try as numeric index (position in filtered list)
+                    try:
+                        n = int(part)
+                        if n < 1 or n > len(self.filtered_pdfs):
+                            raise ValueError(f"Index {n} out of range")
+                        indexes.add(n)
+                    except ValueError:
+                        raise ValueError(f"Unknown selection: '{part}'. Use IDs like CS01 or numeric indexes.")
+
             return sorted(indexes)
         except Exception as e:
             return None
@@ -997,6 +1103,20 @@ class ProcessingTab(QWidget):
             content_types=content_types,
             chat_reset_threshold=self.reset_spin.value()
         )
+        
+        # Set reviews context flags and category
+        self.processing_thread.use_reviews_for_mcq = self.mcq_reviews_check.isChecked()
+        self.processing_thread.use_reviews_for_notes = self.notes_reviews_check.isChecked()
+
+        # Auto-match review category to selected section
+        if self.mids_radio.isChecked():
+            self.processing_thread.review_category = 'mids'
+        elif self.finals_radio.isChecked():
+            self.processing_thread.review_category = 'finals'
+        else:
+            # When "Both" is selected, use 'mids' for mids batches and 'finals' for finals
+            # The thread will handle this per-section
+            self.processing_thread.review_category = 'mids'  # Default, overridden per section
 
         self.processing_thread.log_signal.connect(self.add_log)
         self.processing_thread.status_signal.connect(self._update_status)
@@ -1042,7 +1162,7 @@ class ProcessingTab(QWidget):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("Pause")
         self.is_paused = False
-        self.extract_btn.setEnabled(False)
+        self.repeat_btn.setEnabled(False)
         self.submit_json_btn.setEnabled(False)
         self.skip_btn.setEnabled(False)
         self.batch_info_label.setText("No active batch — start processing first")
@@ -1066,7 +1186,7 @@ class ProcessingTab(QWidget):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("Pause")
         self.is_paused = False
-        self.extract_btn.setEnabled(False)
+        self.repeat_btn.setEnabled(False)
         self.submit_json_btn.setEnabled(False)
         self.skip_btn.setEnabled(False)
         self.batch_info_label.setText("No active batch")
@@ -1088,33 +1208,71 @@ class ProcessingTab(QWidget):
         msg = f"Waiting — {pdf_name} | {section.upper()} | Batch {batch_idx}/{total_batches} ({content_label})"
         self.batch_info_label.setText(msg)
         self.batch_info_label.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 9pt; font-weight: 600;")
-        self.extract_btn.setEnabled(True)
+        self.repeat_btn.setEnabled(True)
         self.submit_json_btn.setEnabled(True)
         self.skip_btn.setEnabled(True)
+        
+        # Update reviews badge for current subject
+        try:
+            from folder_organizer import extract_subject_code
+            from reviews_manager import get_review_count
+            subj = extract_subject_code(pdf_name.replace('.pdf', ''))
+            if subj:
+                count = get_review_count(subj)
+                if count > 0:
+                    self.reviews_badge.setText(f"📝 Reviews: {count}")
+                    self.reviews_badge.setStyleSheet(f"""
+                        QPushButton {{
+                            background: {PALETTE['surface']};
+                            border: 1.5px solid {PALETTE['success']};
+                            border-radius: 7px;
+                            color: {PALETTE['success']};
+                            font-size: 9pt;
+                            font-weight: 600;
+                            padding: 4px 12px;
+                        }}
+                    """)
+                else:
+                    self.reviews_badge.setText("📝 Reviews: 0")
+                    self.reviews_badge.setStyleSheet(f"""
+                        QPushButton {{
+                            background: {PALETTE['surface']};
+                            border: 1.5px solid {PALETTE['border']};
+                            border-radius: 7px;
+                            color: {PALETTE['text_muted']};
+                            font-size: 9pt;
+                            padding: 4px 12px;
+                        }}
+                    """)
+            else:
+                self.reviews_badge.setText("📝 Reviews: —")
+        except Exception:
+            pass
 
     def _on_json_invalid(self, invalid_json):
         self.batch_info_label.setText("Invalid JSON — paste corrected response below")
         self.batch_info_label.setStyleSheet(f"color: {PALETTE['error']}; font-size: 9pt; font-weight: 600;")
         self.json_paste.setPlainText(invalid_json)
-        self.extract_btn.setEnabled(True)
+        self.repeat_btn.setEnabled(True)
         self.submit_json_btn.setEnabled(True)
         self.skip_btn.setEnabled(True)
 
-    def _on_extract(self):
+    def _on_repeat(self):
+        """Repeat the current batch by re-sending the same prompt"""
         if not self.processing_thread or not self.processing_thread.isRunning():
             return
-        try:
-            from gemini_client import GeminiClient
-            client = GeminiClient()
-            raw = client.extract_response()
-            if raw:
-                self.add_log(f"Extracted {len(raw)} chars from Gemini", "success")
-                self.processing_thread.submit_json(raw, source='extract')
-                self._disable_manual_btns()
-            else:
-                self.add_log("No response extracted", "warning")
-        except Exception as e:
-            self.add_log(f"Extract failed: {str(e)}", "error")
+        reply = QMessageBox.question(self, "Repeat Batch?",
+            "Re-send the same prompt for this batch to Gemini?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if reply == QMessageBox.Yes:
+            self.processing_thread.repeat_current_batch()
+            self._disable_manual_btns()
+            self.batch_info_label.setText("Repeating batch...")
+            self.batch_info_label.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 9pt; font-weight: 600;")
+            self.add_log("🔄 Repeat batch requested", "info")
+
+    def _on_extract(self):
+        pass  # Removed — Extract From Chat is no longer available
 
     def _on_skip(self):
         if not self.processing_thread or not self.processing_thread.isRunning():
@@ -1143,7 +1301,7 @@ class ProcessingTab(QWidget):
         self.batch_info_label.setStyleSheet(f"color: {PALETTE['success']}; font-size: 9pt; font-weight: 600;")
 
     def _disable_manual_btns(self):
-        self.extract_btn.setEnabled(False)
+        self.repeat_btn.setEnabled(False)
         self.submit_json_btn.setEnabled(False)
         self.skip_btn.setEnabled(False)
 
@@ -1433,7 +1591,7 @@ class PDFGeneratorTab(QWidget):
 
     def _auto_load_json_files(self):
         """Load JSON files from configured json_output_root"""
-        from folder_organizer import get_json_output_root
+        from folder_organizer import get_json_output_root, get_pdf_output_root
         cfg = self._read_config()
 
         # Try json_output_root first, then root_folder_path, then default
@@ -1447,6 +1605,11 @@ class PDFGeneratorTab(QWidget):
         else:
             self._add_gen_log(f"JSON output directory not found: {root}", "warning")
             self._add_gen_log("Try browsing manually or processing PDFs first.", "info")
+
+        # Auto-fill PDF output directory with dedicated folder
+        if not self.pdf_out_path.text().strip():
+            pdf_root = get_pdf_output_root()
+            self.pdf_out_path.setText(pdf_root)
 
     def _scan_json_from_root(self, root_path):
         from pdf_generator import scan_json_files
@@ -1698,6 +1861,1002 @@ class PDFGeneratorTab(QWidget):
 
 
 # ─────────────────────────────────────────────────────────────
+#  REVIEW WORKER THREADS (prevent UI freezing on large data)
+# ─────────────────────────────────────────────────────────────
+class GeminiSendThread(QThread):
+    """Background thread for sending reviews to Gemini (health check + reset + send)"""
+    log_signal = pyqtSignal(str, str)
+    finished_signal = pyqtSignal(bool, str)
+
+    def __init__(self, raw_text):
+        super().__init__()
+        self.raw_text = raw_text
+
+    def run(self):
+        try:
+            from gemini_client import GeminiClient
+            client = GeminiClient()
+
+            self.log_signal.emit("Checking server health...", "info")
+            if not client.check_health():
+                raise Exception("Gemini server is not running or not initialized")
+
+            self.log_signal.emit("Resetting chat for clean context...", "info")
+            client.reset_chat()
+
+            self.log_signal.emit(f"Sending {len(self.raw_text)} chars to Gemini...", "info")
+            client.send_prompt(
+                self.raw_text,
+                section='reviews',
+                pages_count=1,
+                content_type='reviews'
+            )
+
+            self.finished_signal.emit(True, "Reviews sent to Gemini successfully")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
+
+
+class ReviewsImportThread(QThread):
+    """Background thread for parsing and importing large JSON review data"""
+    log_signal = pyqtSignal(str, str)
+    progress_signal = pyqtSignal(str)              # emits status text for each subject
+    finished_signal = pyqtSignal(bool, str, dict)  # success, message, results_dict
+
+    def __init__(self, json_text, category='uncategorized'):
+        super().__init__()
+        self.json_text = json_text
+        self.category = category
+
+    def run(self):
+        try:
+            import json_fixer
+            from reviews_manager import add_reviews
+
+            self.log_signal.emit("Parsing JSON...", "info")
+            reviews = json_fixer.fix_json(self.json_text, 'reviews')
+
+            if not reviews or len(reviews) == 0:
+                raise Exception("No valid reviews found in JSON")
+
+            self.log_signal.emit(f"✓ Parsed {len(reviews)} valid reviews — starting import ({self.category})...", "success")
+
+            # Group by subject code so we can show per-subject progress
+            grouped = {}
+            for review in reviews:
+                code = review.get('subject_code', 'UNKNOWN').upper().strip()
+                grouped.setdefault(code, []).append(review)
+
+            total_subjects = len(grouped)
+            all_results = {}
+
+            for i, (subject_code, subject_reviews) in enumerate(sorted(grouped.items()), 1):
+                # Update status label with current subject
+                self.progress_signal.emit(
+                    f"⏳ Importing {subject_code}... ({i}/{total_subjects})"
+                )
+                self.log_signal.emit(
+                    f"  → {subject_code}: processing {len(subject_reviews)} review(s)", "info"
+                )
+
+                # Import only this subject's reviews with category
+                result = add_reviews(subject_reviews, category=self.category)
+                added = result.get(subject_code, 0)
+                all_results[subject_code] = added
+
+                self.log_signal.emit(
+                    f"  ✓ {subject_code}: {added} new review(s) saved [{self.category}]", "success"
+                )
+
+            total_added = sum(all_results.values())
+            self.finished_signal.emit(True, f"Imported {total_added} reviews [{self.category}]", all_results)
+
+        except Exception as e:
+            self.finished_signal.emit(False, str(e), {})
+
+
+
+
+# ─────────────────────────────────────────────────────────────
+#  REVIEWS TAB
+# ─────────────────────────────────────────────────────────────
+class ReviewsTab(QWidget):
+    """Tab for structuring, importing, and managing student reviews"""
+    def __init__(self):
+        super().__init__()
+        self._send_thread = None
+        self._import_thread = None
+        self._build_ui()
+        self._refresh_dashboard()
+
+    def _read_config(self):
+        try:
+            with open('config.json', 'r') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    # ── Category selector helper (reused in sections A and B) ─────
+
+    def _build_category_selector(self, parent_layout, prefix):
+        """Build a category radio button group with optional custom input.
+        Returns (button_group, custom_input) tuple.
+        prefix is used to differentiate widget names."""
+        cat_card, cat_layout = make_card('v', (12, 10, 12, 10), 6)
+        cat_layout.addWidget(label_secondary("Review Category"))
+
+        btn_group = QButtonGroup()
+        mids_rb = QRadioButton("Mids")
+        finals_rb = QRadioButton("Finals")
+        custom_rb = QRadioButton("Custom Category")
+        mids_rb.setChecked(True)
+
+        for rb in [mids_rb, finals_rb, custom_rb]:
+            cat_layout.addWidget(rb)
+            btn_group.addButton(rb)
+
+        # Custom category input (hidden by default)
+        custom_row = QHBoxLayout()
+        custom_input = QComboBox()
+        custom_input.setEditable(True)
+        custom_input.setMinimumHeight(30)
+        custom_input.setMinimumWidth(180)
+        custom_input.addItems(["9th Class", "10th Class", "Entry Test", "Custom Syllabus"])
+        custom_input.setCurrentText("")
+        custom_input.lineEdit().setPlaceholderText("Type or select category...")
+        custom_input.setVisible(False)
+        custom_row.addWidget(custom_input)
+        custom_row.addStretch()
+        cat_layout.addLayout(custom_row)
+
+        # Toggle custom input visibility
+        def on_toggle():
+            custom_input.setVisible(custom_rb.isChecked())
+        mids_rb.toggled.connect(on_toggle)
+        finals_rb.toggled.connect(on_toggle)
+        custom_rb.toggled.connect(on_toggle)
+
+        parent_layout.addWidget(cat_card)
+
+        # Store references
+        setattr(self, f'{prefix}_mids_rb', mids_rb)
+        setattr(self, f'{prefix}_finals_rb', finals_rb)
+        setattr(self, f'{prefix}_custom_rb', custom_rb)
+        setattr(self, f'{prefix}_custom_input', custom_input)
+        setattr(self, f'{prefix}_btn_group', btn_group)
+
+        return btn_group, custom_input
+
+    def _get_selected_category(self, prefix):
+        """Get the selected category name from a category selector."""
+        mids_rb = getattr(self, f'{prefix}_mids_rb')
+        finals_rb = getattr(self, f'{prefix}_finals_rb')
+        custom_rb = getattr(self, f'{prefix}_custom_rb')
+        custom_input = getattr(self, f'{prefix}_custom_input')
+
+        if mids_rb.isChecked():
+            return 'mids'
+        elif finals_rb.isChecked():
+            return 'finals'
+        elif custom_rb.isChecked():
+            text = custom_input.currentText().strip()
+            if text:
+                return text.lower().replace(' ', '_')
+            return 'custom'
+        return 'uncategorized'
+
+    def _build_ui(self):
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
+
+        # Prevent horizontal overflow
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+
+        # ── Header ────────────────────────────────────────────
+        header_row = QHBoxLayout()
+        title_lbl = QLabel("Reviews Manager")
+        title_lbl.setStyleSheet(f"color: {PALETTE['navy']}; font-size: 14pt; font-weight: 700;")
+        desc_lbl = label_muted("Structure, import, and manage student course reviews")
+        header_row.addWidget(title_lbl)
+        header_row.addWidget(desc_lbl)
+        header_row.addStretch()
+        root_layout.addLayout(header_row)
+
+        root_layout.addWidget(divider())
+
+        # ══════════════════════════════════════════════════════
+        # SECTION A: Generate Structured Reviews via Gemini
+        # ══════════════════════════════════════════════════════
+        gen_card, gen_layout = make_card('v', (16, 14, 16, 14), 10)
+
+        gen_header = QHBoxLayout()
+        gen_title = QLabel("① Generate Structured Reviews")
+        gen_title.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 11pt; font-weight: 700;")
+        gen_header.addWidget(gen_title)
+        gen_header.addStretch()
+
+        gen_hint = label_muted("Paste raw reviews or upload file → Send to Gemini → Get structured JSON")
+        gen_header.addWidget(gen_hint)
+        gen_layout.addLayout(gen_header)
+
+        # Category selector for generation
+        self._build_category_selector(gen_layout, 'gen')
+
+        gen_layout.addWidget(label_secondary("Raw Reviews Text"))
+
+        # File upload row
+        upload_row = QHBoxLayout()
+        upload_row.setSpacing(8)
+
+        self.upload_file_btn = QPushButton("📁 Upload File (PDF/DOCX/TXT)")
+        self.upload_file_btn.setMinimumHeight(32)
+        self.upload_file_btn.setMinimumWidth(250)
+        self.upload_file_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px dashed {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9.5pt;
+                padding: 5px 16px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['accent']};
+                color: {PALETTE['accent']};
+                background: {PALETTE['row_hover']};
+            }}
+        """)
+        self.upload_file_btn.clicked.connect(self._upload_file_for_text)
+        upload_row.addWidget(self.upload_file_btn)
+
+        self.upload_status = label_muted("")
+        upload_row.addWidget(self.upload_status, 1)
+        upload_row.addStretch()
+        gen_layout.addLayout(upload_row)
+
+        self.raw_reviews_input = QPlainTextEdit()
+        self.raw_reviews_input.setPlaceholderText(
+            "Paste bulk unstructured reviews here...\n\n"
+            "They can be in any language (Urdu, Roman Urdu, English, etc.)\n"
+            "Unrelated text will be filtered out by Gemini.\n\n"
+            "Or use the 'Upload File' button above to extract text from PDF/Word/TXT files.\n\n"
+            "Example:\n"
+            "MGT501 ka paper easy tha, bas lectures ache se parho\n"
+            "CS101 mein loops se bohat questions aaye 15/03/2024"
+        )
+        self.raw_reviews_input.setMinimumHeight(120)
+        self.raw_reviews_input.setMaximumHeight(180)
+        self.raw_reviews_input.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background: {PALETTE['bg']};
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9.5pt;
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                padding: 8px;
+            }}
+        """)
+        gen_layout.addWidget(self.raw_reviews_input)
+
+        send_row = QHBoxLayout()
+        self.send_to_gemini_btn = QPushButton("Send to Gemini for Structuring")
+        self.send_to_gemini_btn.setObjectName("primary")
+        self.send_to_gemini_btn.setMinimumHeight(36)
+        self.send_to_gemini_btn.setMinimumWidth(280)
+        self.send_to_gemini_btn.clicked.connect(self._send_reviews_to_gemini)
+        send_row.addStretch()
+        send_row.addWidget(self.send_to_gemini_btn)
+        send_row.addStretch()
+        gen_layout.addLayout(send_row)
+
+        # Status label
+        self.gemini_status_label = label_muted("Ready to send")
+        self.gemini_status_label.setAlignment(Qt.AlignCenter)
+        gen_layout.addWidget(self.gemini_status_label)
+
+        root_layout.addWidget(gen_card)
+
+        # ══════════════════════════════════════════════════════
+        # SECTION B: Import Structured JSON Reviews
+        # ══════════════════════════════════════════════════════
+        import_card, import_layout = make_card('v', (16, 14, 16, 14), 10)
+
+        import_header = QHBoxLayout()
+        import_title = QLabel("② Import Structured JSON")
+        import_title.setStyleSheet(f"color: {PALETTE['success']}; font-size: 11pt; font-weight: 700;")
+        import_header.addWidget(import_title)
+        import_header.addStretch()
+
+        import_hint = label_muted("Paste generated JSON or import file → Reviews get added category-wise")
+        import_header.addWidget(import_hint)
+        import_layout.addLayout(import_header)
+
+        # Category selector for import
+        self._build_category_selector(import_layout, 'imp')
+
+        import_layout.addWidget(label_secondary("Structured JSON"))
+
+        # JSON file import row
+        json_import_row = QHBoxLayout()
+        json_import_row.setSpacing(8)
+
+        self.import_json_file_btn = QPushButton("📄 Import JSON File")
+        self.import_json_file_btn.setMinimumHeight(32)
+        self.import_json_file_btn.setMinimumWidth(180)
+        self.import_json_file_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px dashed {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9.5pt;
+                padding: 5px 16px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['success']};
+                color: {PALETTE['success']};
+                background: {PALETTE['row_hover']};
+            }}
+        """)
+        self.import_json_file_btn.clicked.connect(self._import_json_file)
+        json_import_row.addWidget(self.import_json_file_btn)
+
+        self.json_file_status = label_muted("")
+        json_import_row.addWidget(self.json_file_status, 1)
+        json_import_row.addStretch()
+        import_layout.addLayout(json_import_row)
+
+        self.json_import_input = QPlainTextEdit()
+        self.json_import_input.setPlaceholderText(
+            'Paste the structured JSON from Gemini here, or use "Import JSON File" above...\n\n'
+            'Expected format:\n'
+            '[\n'
+            '  {"subject_code": "MGT501", "review": "...", "review_date": "2024-03-15"},\n'
+            '  {"subject_code": "CS101", "review": "...", "review_date": null}\n'
+            ']'
+        )
+        self.json_import_input.setMinimumHeight(100)
+        self.json_import_input.setMaximumHeight(160)
+        self.json_import_input.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background: {PALETTE['bg']};
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9.5pt;
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                padding: 8px;
+            }}
+        """)
+        import_layout.addWidget(self.json_import_input)
+
+        import_btn_row = QHBoxLayout()
+        self.import_btn = QPushButton("Import Reviews")
+        self.import_btn.setObjectName("success")
+        self.import_btn.setMinimumHeight(36)
+        self.import_btn.setMinimumWidth(200)
+        self.import_btn.clicked.connect(self._import_reviews)
+        import_btn_row.addStretch()
+        import_btn_row.addWidget(self.import_btn)
+        import_btn_row.addStretch()
+        import_layout.addLayout(import_btn_row)
+
+        # Import status — with word wrap to prevent overflow
+        self.import_status_label = label_muted("")
+        self.import_status_label.setAlignment(Qt.AlignCenter)
+        self.import_status_label.setWordWrap(True)
+        self.import_status_label.setMaximumWidth(800)
+        import_layout.addWidget(self.import_status_label)
+
+        root_layout.addWidget(import_card)
+
+        # ══════════════════════════════════════════════════════
+        # SECTION C: Reviews Dashboard
+        # ══════════════════════════════════════════════════════
+        dash_card, dash_layout = make_card('v', (16, 14, 16, 14), 10)
+
+        dash_header = QHBoxLayout()
+        dash_title = QLabel("③ Reviews Dashboard")
+        dash_title.setStyleSheet(f"color: {PALETTE['navy']}; font-size: 11pt; font-weight: 700;")
+        dash_header.addWidget(dash_title)
+        dash_header.addStretch()
+
+        self.refresh_dash_btn = QPushButton("  Refresh  ")
+        self.refresh_dash_btn.setFixedHeight(32)
+        self.refresh_dash_btn.setMinimumWidth(90)
+        self.refresh_dash_btn.clicked.connect(self._refresh_dashboard)
+        dash_header.addWidget(self.refresh_dash_btn)
+        dash_layout.addLayout(dash_header)
+
+        # Stats row
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(16)
+
+        def _stat_card(title_text):
+            sc, sl = make_card('v', (12, 10, 12, 10), 4)
+            sc.setStyleSheet(f"""
+                QFrame#card {{
+                    background: {PALETTE['bg']};
+                    border: 1.5px solid {PALETTE['border']};
+                    border-radius: 8px;
+                }}
+            """)
+            sl.addWidget(label_secondary(title_text))
+            return sc, sl
+
+        stat1_card, stat1_layout = _stat_card("Total Reviews")
+        self.total_reviews_val = QLabel("0")
+        self.total_reviews_val.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 18pt; font-weight: 700;")
+        stat1_layout.addWidget(self.total_reviews_val)
+        stats_row.addWidget(stat1_card)
+
+        stat2_card, stat2_layout = _stat_card("Subjects Covered")
+        self.total_subjects_val = QLabel("0")
+        self.total_subjects_val.setStyleSheet(f"color: {PALETTE['success']}; font-size: 18pt; font-weight: 700;")
+        stat2_layout.addWidget(self.total_subjects_val)
+        stats_row.addWidget(stat2_card)
+
+        stat3_card, stat3_layout = _stat_card("Categories")
+        self.categories_val = QLabel("—")
+        self.categories_val.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 9pt; font-weight: 500;")
+        self.categories_val.setWordWrap(True)
+        stat3_layout.addWidget(self.categories_val)
+        stats_row.addWidget(stat3_card)
+
+        stat4_card, stat4_layout = _stat_card("Storage")
+        self.storage_val = QLabel("—")
+        self.storage_val.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 9pt; font-weight: 500;")
+        self.storage_val.setWordWrap(True)
+        stat4_layout.addWidget(self.storage_val)
+        stats_row.addWidget(stat4_card)
+
+        dash_layout.addLayout(stats_row)
+
+        # ── Category filter buttons row ───────────────────────
+        dash_layout.addWidget(label_secondary("Filter by Category"))
+
+        cat_filter_container = QHBoxLayout()
+        cat_filter_container.setSpacing(6)
+
+        self.cat_all_btn = QPushButton("All")
+        self.cat_all_btn.setFixedHeight(28)
+        self.cat_all_btn.setMinimumWidth(60)
+        self.cat_all_btn.setCheckable(True)
+        self.cat_all_btn.setChecked(True)
+        self.cat_all_btn.clicked.connect(lambda: self._set_dash_category_filter('all'))
+        self._cat_filter_btns = {'all': self.cat_all_btn}
+        self._active_cat_filter = 'all'
+        self._style_cat_filter_btn(self.cat_all_btn, True)
+        cat_filter_container.addWidget(self.cat_all_btn)
+        cat_filter_container.addStretch()
+
+        self.cat_filter_row = cat_filter_container
+        cat_filter_widget = QWidget()
+        cat_filter_widget.setLayout(cat_filter_container)
+        cat_filter_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        dash_layout.addWidget(cat_filter_widget)
+
+        # ── Search bar ────────────────────────────────────────
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+
+        self.dash_search_input = QLineEdit()
+        self.dash_search_input.setPlaceholderText("🔍 Search subjects (e.g., CS101, MGT)...")
+        self.dash_search_input.setMinimumHeight(32)
+        self.dash_search_input.textChanged.connect(self._filter_dashboard)
+        search_row.addWidget(self.dash_search_input, 3)
+
+        self.dash_result_count = label_muted("0 subjects")
+        self.dash_result_count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        search_row.addWidget(self.dash_result_count)
+        dash_layout.addLayout(search_row)
+
+        # Reviews table (5 columns: #, Subject, Category, Count, Date)
+        self.reviews_table = QTableWidget(0, 5)
+        self.reviews_table.setHorizontalHeaderLabels(["#", "Subject Code", "Category", "Reviews Count", "Latest Date"])
+        self.reviews_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.reviews_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.reviews_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.reviews_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.reviews_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.reviews_table.setColumnWidth(0, 44)
+        self.reviews_table.setColumnWidth(2, 100)
+        self.reviews_table.setColumnWidth(3, 110)
+        self.reviews_table.setColumnWidth(4, 110)
+        self.reviews_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.reviews_table.setAlternatingRowColors(True)
+        self.reviews_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.reviews_table.verticalHeader().setVisible(False)
+        self.reviews_table.setMinimumHeight(140)
+        self.reviews_table.setMaximumHeight(300)
+        self.reviews_table.setShowGrid(False)
+        self.reviews_table.setStyleSheet(f"""
+            QTableWidget {{
+                alternate-background-color: {PALETTE['row_alt']};
+            }}
+        """)
+        dash_layout.addWidget(self.reviews_table)
+
+        # Delete button
+        del_row = QHBoxLayout()
+        del_row.addStretch()
+        self.delete_reviews_btn = QPushButton("Delete Selected Subject Reviews")
+        self.delete_reviews_btn.setObjectName("danger")
+        self.delete_reviews_btn.setMinimumHeight(32)
+        self.delete_reviews_btn.clicked.connect(self._delete_selected_reviews)
+        del_row.addWidget(self.delete_reviews_btn)
+        dash_layout.addLayout(del_row)
+
+        root_layout.addWidget(dash_card)
+
+        # ── Log card ──────────────────────────────────────────
+        log_card, log_layout = make_card('v', (14, 12, 14, 12), 8)
+
+        log_header = QHBoxLayout()
+        log_header.addWidget(label_secondary("Reviews Log"))
+        log_header.addStretch()
+        clr = QPushButton("Clear")
+        clr.setFixedWidth(56)
+        clr.setFixedHeight(24)
+        clr.setStyleSheet("font-size: 8.5pt; padding: 2px 8px;")
+        clr.clicked.connect(lambda: self.reviews_log.clear())
+        log_header.addWidget(clr)
+        log_layout.addLayout(log_header)
+
+        self.reviews_log = QTextEdit()
+        self.reviews_log.setReadOnly(True)
+        self.reviews_log.setMinimumHeight(100)
+        self.reviews_log.setMaximumHeight(180)
+        self.reviews_log.setStyleSheet(f"""
+            QTextEdit {{
+                background: {PALETTE['navy']};
+                color: #c9d1d9;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9pt;
+                border: none;
+                border-radius: 7px;
+                padding: 10px;
+            }}
+        """)
+        log_layout.addWidget(self.reviews_log)
+        root_layout.addWidget(log_card)
+        root_layout.addStretch()
+
+        # ── Internal state ────────────────────────────────────
+        self._dash_data = []        # Flat list of {subject_code, category, count, last_date}
+
+    # ── Style helpers ─────────────────────────────────────────
+
+    def _style_cat_filter_btn(self, btn, active=False):
+        if active:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {PALETTE['accent']};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 9pt;
+                    font-weight: 600;
+                    padding: 4px 14px;
+                }}
+            """)
+        else:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {PALETTE['surface']};
+                    border: 1.5px solid {PALETTE['border']};
+                    border-radius: 6px;
+                    color: {PALETTE['text_secondary']};
+                    font-size: 9pt;
+                    padding: 4px 14px;
+                }}
+                QPushButton:hover {{
+                    border-color: {PALETTE['accent']};
+                    color: {PALETTE['accent']};
+                }}
+            """)
+
+    # ── Log helper ────────────────────────────────────────────
+
+    def _add_log(self, message, level="info"):
+        colors = {
+            "info":    "#79c0ff",
+            "success": "#56d364",
+            "warning": "#e3b341",
+            "error":   "#f85149",
+        }
+        color = colors.get(level, "#c9d1d9")
+        html = f'<span style="color:{color};">{message}</span>'
+        cursor = self.reviews_log.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.reviews_log.setTextCursor(cursor)
+        self.reviews_log.insertHtml(html + "<br>")
+        self.reviews_log.verticalScrollBar().setValue(self.reviews_log.verticalScrollBar().maximum())
+
+    # ── File Upload (Section A) ───────────────────────────────
+
+    def _upload_file_for_text(self):
+        """Upload a PDF/DOCX/TXT file and extract text into the raw reviews input"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select File for Text Extraction", os.path.expanduser("~"),
+            "Supported Files (*.pdf *.docx *.doc *.txt *.rtf);;PDF Files (*.pdf);;Word Files (*.docx *.doc);;Text Files (*.txt *.rtf);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        file_name = Path(file_path).name
+        file_ext = Path(file_path).suffix.lower()
+        self.upload_status.setText(f"⏳ Extracting text from {file_name}...")
+        self.upload_status.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 9pt; font-weight: 500;")
+
+        try:
+            extracted_text = ""
+
+            if file_ext == '.pdf':
+                import fitz  # PyMuPDF — already a dependency
+                doc = fitz.open(file_path)
+                pages_text = []
+                for page in doc:
+                    pages_text.append(page.get_text())
+                doc.close()
+                extracted_text = "\n\n".join(pages_text)
+
+            elif file_ext in ['.docx', '.doc']:
+                try:
+                    from docx import Document
+                    doc = Document(file_path)
+                    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                    extracted_text = "\n".join(paragraphs)
+                except ImportError:
+                    QMessageBox.warning(self, "Missing Dependency",
+                        "python-docx is required for Word files.\n\nInstall it with: pip install python-docx")
+                    return
+
+            elif file_ext in ['.txt', '.rtf']:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    extracted_text = f.read()
+
+            else:
+                QMessageBox.warning(self, "Unsupported", f"File type '{file_ext}' is not supported.")
+                return
+
+            if not extracted_text.strip():
+                self.upload_status.setText(f"⚠️ No text found in {file_name}")
+                self.upload_status.setStyleSheet(f"color: {PALETTE['warning']}; font-size: 9pt;")
+                self._add_log(f"⚠️ No text extracted from {file_name}", "warning")
+                return
+
+            self.raw_reviews_input.setPlainText(extracted_text)
+            char_count = len(extracted_text)
+            self.upload_status.setText(f"✓ {file_name} — {char_count:,} chars extracted")
+            self.upload_status.setStyleSheet(f"color: {PALETTE['success']}; font-size: 9pt; font-weight: 500;")
+            self._add_log(f"✓ Extracted {char_count:,} chars from {file_name}", "success")
+
+        except Exception as e:
+            self.upload_status.setText(f"❌ Failed: {str(e)[:60]}")
+            self.upload_status.setStyleSheet(f"color: {PALETTE['error']}; font-size: 9pt;")
+            self._add_log(f"❌ File extraction failed: {str(e)}", "error")
+
+    # ── JSON File Import (Section B) ──────────────────────────
+
+    def _import_json_file(self):
+        """Import a JSON file, validate it, and populate the import field"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import JSON Reviews File", os.path.expanduser("~"),
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        file_name = Path(file_path).name
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw_content = f.read()
+
+            if not raw_content.strip():
+                QMessageBox.warning(self, "Empty File", f"{file_name} is empty.")
+                return
+
+            try:
+                import json_fixer
+                reviews = json_fixer.fix_json(raw_content, 'reviews')
+
+                if reviews and len(reviews) > 0:
+                    self.json_file_status.setText(f"✓ {file_name} — {len(reviews)} valid reviews")
+                    self.json_file_status.setStyleSheet(f"color: {PALETTE['success']}; font-size: 9pt; font-weight: 500;")
+                    self.json_import_input.setPlainText(raw_content)
+                    self._add_log(f"✓ Loaded {file_name}: {len(reviews)} valid reviews found", "success")
+                else:
+                    self.json_file_status.setText(f"⚠️ {file_name} — no valid reviews found")
+                    self.json_file_status.setStyleSheet(f"color: {PALETTE['warning']}; font-size: 9pt;")
+                    self.json_import_input.setPlainText(raw_content)
+                    self._add_log(f"⚠️ {file_name}: JSON loaded but no valid reviews detected", "warning")
+
+            except Exception as e:
+                self.json_file_status.setText(f"⚠️ {file_name} — needs fixing: {str(e)[:40]}")
+                self.json_file_status.setStyleSheet(f"color: {PALETTE['warning']}; font-size: 9pt;")
+                self.json_import_input.setPlainText(raw_content)
+                self._add_log(f"⚠️ {file_name}: JSON validation issue — {str(e)}", "warning")
+                self._add_log("Content loaded into editor for manual correction", "info")
+
+        except Exception as e:
+            self.json_file_status.setText(f"❌ Failed: {str(e)[:50]}")
+            self.json_file_status.setStyleSheet(f"color: {PALETTE['error']}; font-size: 9pt;")
+            self._add_log(f"❌ Failed to read {file_name}: {str(e)}", "error")
+
+    # ── Section A: Send to Gemini (background thread) ─────────
+
+    def _send_reviews_to_gemini(self):
+        """Send raw reviews text to Gemini for structuring — runs in background thread"""
+        raw_text = self.raw_reviews_input.toPlainText().strip()
+        if not raw_text:
+            QMessageBox.warning(self, "Empty", "Paste raw reviews text first or upload a file.")
+            return
+
+        if len(raw_text) < 20:
+            QMessageBox.warning(self, "Too Short", "The text seems too short. Paste more reviews.")
+            return
+
+        category = self._get_selected_category('gen')
+        self.gemini_status_label.setText(f"⏳ Sending to Gemini [{category}]...")
+        self.gemini_status_label.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 9pt; font-weight: 600;")
+        self.send_to_gemini_btn.setEnabled(False)
+        self._add_log(f"Sending {len(raw_text)} chars of raw reviews to Gemini [{category}]...", "info")
+
+        self._send_thread = GeminiSendThread(raw_text)
+        self._send_thread.log_signal.connect(self._add_log)
+        self._send_thread.finished_signal.connect(self._on_gemini_send_done)
+        self._send_thread.start()
+
+    def _on_gemini_send_done(self, success, message):
+        """Callback when Gemini send thread completes"""
+        self.send_to_gemini_btn.setEnabled(True)
+        if success:
+            category = self._get_selected_category('gen')
+            self.gemini_status_label.setText(f"✓ Sent! Copy the JSON response from Gemini and paste it below ↓ [Category: {category}]")
+            self.gemini_status_label.setStyleSheet(f"color: {PALETTE['success']}; font-size: 9pt; font-weight: 600;")
+            self._add_log("✓ Reviews sent to Gemini successfully. Copy the JSON response and paste it in the Import section.", "success")
+            self._sync_category_to_import()
+        else:
+            self.gemini_status_label.setText(f"❌ Failed: {message}")
+            self.gemini_status_label.setStyleSheet(f"color: {PALETTE['error']}; font-size: 9pt;")
+            self._add_log(f"❌ Send failed: {message}", "error")
+
+    def _sync_category_to_import(self):
+        """Sync the generation category selection to the import section"""
+        gen_category = self._get_selected_category('gen')
+        if gen_category == 'mids':
+            self.imp_mids_rb.setChecked(True)
+        elif gen_category == 'finals':
+            self.imp_finals_rb.setChecked(True)
+        else:
+            self.imp_custom_rb.setChecked(True)
+            self.imp_custom_input.setCurrentText(gen_category.replace('_', ' ').title())
+
+    # ── Section B: Import JSON Reviews (background thread) ────
+
+    def _import_reviews(self):
+        """Parse and import structured JSON reviews — runs in background thread"""
+        json_text = self.json_import_input.toPlainText().strip()
+        if not json_text:
+            QMessageBox.warning(self, "Empty", "Paste the structured JSON first or import a JSON file.")
+            return
+
+        category = self._get_selected_category('imp')
+
+        self.import_btn.setEnabled(False)
+        self.import_status_label.setText(f"⏳ Processing [{category}]...")
+        self.import_status_label.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 9pt; font-weight: 600;")
+        self._add_log(f"Starting import in background [{category}]...", "info")
+
+        self._import_thread = ReviewsImportThread(json_text, category=category)
+        self._import_thread.log_signal.connect(self._add_log)
+        self._import_thread.progress_signal.connect(self._on_import_progress)
+        self._import_thread.finished_signal.connect(self._on_import_done)
+        self._import_thread.start()
+
+    def _on_import_progress(self, status_text):
+        """Update the status label in real-time as each subject is imported"""
+        self.import_status_label.setText(status_text)
+        self.import_status_label.setStyleSheet(
+            f"color: {PALETTE['accent']}; font-size: 9pt; font-weight: 600;"
+        )
+
+    def _on_import_done(self, success, message, results):
+        """Callback when import thread completes"""
+        self.import_btn.setEnabled(True)
+        if success:
+            subject_count = len(results)
+            if subject_count <= 8:
+                msg_parts = [f"{code}: +{count}" for code, count in sorted(results.items())]
+                summary_text = f"✓ {message}: {', '.join(msg_parts)}"
+            else:
+                first_5 = list(sorted(results.items()))[:5]
+                msg_parts = [f"{code}: +{count}" for code, count in first_5]
+                summary_text = f"✓ {message} ({subject_count} subjects): {', '.join(msg_parts)} ... +{subject_count - 5} more"
+
+            detailed_logs = [f"  {code}: {count} reviews added" for code, count in sorted(results.items())]
+            if detailed_logs:
+                self._add_log("<br>".join(detailed_logs), "success")
+
+            self.import_status_label.setText(summary_text)
+            self.import_status_label.setStyleSheet(f"color: {PALETTE['success']}; font-size: 9pt; font-weight: 600;")
+            self._add_log(f"✅ {message}!", "success")
+            self.json_import_input.clear()
+            self._refresh_dashboard()
+        else:
+            self.import_status_label.setText(f"❌ Import failed: {message}")
+            self.import_status_label.setStyleSheet(f"color: {PALETTE['error']}; font-size: 9pt;")
+            self._add_log(f"❌ Import failed: {message}", "error")
+
+    # ── Section C: Dashboard ──────────────────────────────────
+
+    def _set_dash_category_filter(self, category):
+        """Set the active category filter for the dashboard"""
+        self._active_cat_filter = category
+        for cat_name, btn in self._cat_filter_btns.items():
+            self._style_cat_filter_btn(btn, active=(cat_name == category))
+        self._filter_dashboard()
+
+    def _filter_dashboard(self):
+        """Filter the dashboard table based on search and category filter"""
+        search = self.dash_search_input.text().strip().upper()
+        cat_filter = self._active_cat_filter
+
+        filtered = self._dash_data
+        if cat_filter != 'all':
+            filtered = [d for d in filtered if d['category'] == cat_filter]
+        if search:
+            filtered = [d for d in filtered if search in d['subject_code'].upper()]
+
+        self._populate_dash_table(filtered)
+        self.dash_result_count.setText(f"{len(filtered)} subjects")
+
+    def _populate_dash_table(self, data):
+        """Populate the reviews dashboard table"""
+        self.reviews_table.setRowCount(0)
+        for i, item in enumerate(data, 1):
+            row = self.reviews_table.rowCount()
+            self.reviews_table.insertRow(row)
+
+            idx_item = QTableWidgetItem(str(i))
+            idx_item.setTextAlignment(Qt.AlignCenter)
+            idx_item.setForeground(QColor(PALETTE['text_muted']))
+
+            code_item = QTableWidgetItem(item['subject_code'])
+            code_item.setForeground(QColor(PALETTE['accent']))
+            code_item.setData(Qt.UserRole, item['subject_code'])
+            code_item.setData(Qt.UserRole + 1, item['category'])
+
+            cat_item = QTableWidgetItem(item['category'].replace('_', ' ').title())
+            cat_item.setTextAlignment(Qt.AlignCenter)
+            if item['category'] == 'mids':
+                cat_item.setForeground(QColor(PALETTE['accent']))
+            elif item['category'] == 'finals':
+                cat_item.setForeground(QColor(PALETTE['success']))
+            else:
+                cat_item.setForeground(QColor(PALETTE['warning']))
+
+            count_item = QTableWidgetItem(str(item['count']))
+            count_item.setTextAlignment(Qt.AlignCenter)
+            count_item.setForeground(QColor(PALETTE['success']))
+
+            date_item = QTableWidgetItem(item.get('last_date') or '—')
+            date_item.setTextAlignment(Qt.AlignCenter)
+            date_item.setForeground(QColor(PALETTE['text_secondary']))
+
+            self.reviews_table.setItem(row, 0, idx_item)
+            self.reviews_table.setItem(row, 1, code_item)
+            self.reviews_table.setItem(row, 2, cat_item)
+            self.reviews_table.setItem(row, 3, count_item)
+            self.reviews_table.setItem(row, 4, date_item)
+
+    def _refresh_dashboard(self):
+        """Refresh the reviews dashboard with current data"""
+        try:
+            from reviews_manager import get_all_review_stats, get_all_categories
+            from folder_organizer import get_json_output_root
+
+            stats = get_all_review_stats()
+            all_categories = get_all_categories()
+
+            self._dash_data = []
+            total_reviews = 0
+            cat_counts = {}
+
+            for subject_code, info in sorted(stats.items()):
+                categories = info.get('categories', {})
+                for cat, cat_info in categories.items():
+                    count = cat_info.get('count', 0)
+                    self._dash_data.append({
+                        'subject_code': subject_code,
+                        'category': cat,
+                        'count': count,
+                        'last_date': cat_info.get('last_date')
+                    })
+                    total_reviews += count
+                    cat_counts[cat] = cat_counts.get(cat, 0) + count
+
+            total_subjects = len(stats)
+
+            self.total_reviews_val.setText(str(total_reviews))
+            self.total_subjects_val.setText(str(total_subjects))
+            self.storage_val.setText(get_json_output_root())
+
+            if cat_counts:
+                cat_parts = [f"{cat.replace('_', ' ').title()}: {cnt}" for cat, cnt in sorted(cat_counts.items())]
+                self.categories_val.setText(" | ".join(cat_parts))
+            else:
+                self.categories_val.setText("—")
+
+            self._update_category_filter_buttons(all_categories, cat_counts)
+            self._filter_dashboard()
+
+            if total_reviews > 0:
+                self._add_log(f"Dashboard refreshed: {total_reviews} reviews across {total_subjects} subjects", "info")
+            else:
+                self._add_log("No reviews stored yet. Generate or import reviews to get started.", "info")
+
+        except Exception as e:
+            self._add_log(f"Dashboard refresh failed: {str(e)}", "error")
+
+    def _update_category_filter_buttons(self, all_categories, cat_counts):
+        """Dynamically update category filter buttons"""
+        for key in list(self._cat_filter_btns.keys()):
+            if key != 'all':
+                btn = self._cat_filter_btns.pop(key)
+                self.cat_filter_row.removeWidget(btn)
+                btn.deleteLater()
+
+        total = sum(cat_counts.values())
+        self.cat_all_btn.setText(f"All ({total})")
+        self._style_cat_filter_btn(self.cat_all_btn, self._active_cat_filter == 'all')
+
+        for cat in sorted(all_categories):
+            count = cat_counts.get(cat, 0)
+            display_name = cat.replace('_', ' ').title()
+            btn = QPushButton(f"{display_name} ({count})")
+            btn.setFixedHeight(28)
+            btn.setMinimumWidth(60)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, c=cat: self._set_dash_category_filter(c))
+            self._style_cat_filter_btn(btn, self._active_cat_filter == cat)
+            self.cat_filter_row.insertWidget(self.cat_filter_row.count() - 1, btn)
+            self._cat_filter_btns[cat] = btn
+
+    def _delete_selected_reviews(self):
+        """Delete reviews for the selected subject"""
+        selected = self.reviews_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Select a subject row to delete.")
+            return
+
+        row = selected[0].row()
+        code_item = self.reviews_table.item(row, 1)
+        if not code_item:
+            return
+
+        subject_code = code_item.data(Qt.UserRole)
+        category = code_item.data(Qt.UserRole + 1)
+        count_item = self.reviews_table.item(row, 3)
+        count = count_item.text() if count_item else "?"
+
+        reply = QMessageBox.question(self, "Delete Reviews?",
+            f"Delete all {count} reviews for {subject_code} [{category}]?\n\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            try:
+                from reviews_manager import ReviewsManager
+                mgr = ReviewsManager()
+                mgr.delete_reviews(subject_code, category=category)
+                self._add_log(f"✓ Deleted reviews for {subject_code} [{category}]", "success")
+                self._refresh_dashboard()
+            except Exception as e:
+                self._add_log(f"❌ Delete failed: {str(e)}", "error")
+
+
 #  MAIN WINDOW
 # ─────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
@@ -1740,7 +2899,7 @@ class MainWindow(QMainWindow):
 
         # Tab buttons
         self._nav_btns = []
-        for i, text in enumerate(["Processing", "PDF Generator"]):
+        for i, text in enumerate(["Processing", "PDF Generator", "Reviews"]):
             btn = QPushButton(text)
             btn.setCheckable(True)
             btn.setFixedHeight(52)
@@ -1786,9 +2945,11 @@ class MainWindow(QMainWindow):
 
         self.processing_tab = ProcessingTab()
         self.pdf_gen_tab = PDFGeneratorTab()
+        self.reviews_tab = ReviewsTab()
 
         self.stack_layout.addWidget(self.processing_tab)
         self.stack_layout.addWidget(self.pdf_gen_tab)
+        self.stack_layout.addWidget(self.reviews_tab)
 
         self.scroll_area.setWidget(self.content_stack)
         main_vbox.addWidget(self.scroll_area)
@@ -1799,6 +2960,7 @@ class MainWindow(QMainWindow):
     def _switch_tab(self, idx):
         self.processing_tab.setVisible(idx == 0)
         self.pdf_gen_tab.setVisible(idx == 1)
+        self.reviews_tab.setVisible(idx == 2)
 
         for i, btn in enumerate(self._nav_btns):
             btn.setChecked(i == idx)

@@ -36,34 +36,58 @@ class JSONFixer:
             List of valid dictionaries
         """
         # Stage 0: Fast path - try direct parse first
+        print(f"\n[JSONFixer] Processing {len(text)} chars for type: {expected_type}")
+        print("[JSONFixer] Stage 0: Attempting fast native parse...")
         try:
             result = json.loads(text)
             self.stats['fast_path'] += 1
             if isinstance(result, list) and len(result) > 0:
                 valid_items = self._validate_and_filter(result, expected_type)
                 if valid_items:
+                    print(f"✓ [JSONFixer] Success: Native parse passed ({len(valid_items)} valid items)")
                     return valid_items
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ [JSONFixer] Stage 0 failed: {str(e)}")
         
         # Stage 1: Quick basic cleanup
+        print("[JSONFixer] Stage 1: Applying quick regex fixes (markdown, trailing commas, brackets)...")
         cleaned = self._quick_fixes(text)
         
+        # Stage 1.5: Fast path after cleanup
+        print("[JSONFixer] Stage 1.5: Attempting native parse on cleaned text...")
+        try:
+            result = json.loads(cleaned)
+            self.stats['fast_path'] += 1
+            if isinstance(result, list) and len(result) > 0:
+                valid_items = self._validate_and_filter(result, expected_type)
+                if valid_items:
+                    print(f"✓ [JSONFixer] Success: Native parse passed after quick fixes ({len(valid_items)} valid items)")
+                    return valid_items
+        except Exception as e:
+            print(f"⚠️ [JSONFixer] Stage 1.5 failed: {str(e)}")
+        
         # Stage 2: Use json-repair library
+        # Safety limit: json-repair can take 10+ minutes and freeze the app on massive broken JSONs
+        if len(cleaned) > 200000:
+            print("❌ [JSONFixer] FATAL: Text is too large (200k+ chars) and severely broken.")
+            print("❌ [JSONFixer] Bypassing json-repair to prevent UI freezing.")
+            raise Exception("JSON payload is severely malformed and too large to auto-repair safely. Please click 'Repeat Batch'.")
+
+        print("[JSONFixer] Stage 2: Attempting advanced json-repair (this might take some time)...")
         try:
             result = repair_json(cleaned, return_objects=True)
             if isinstance(result, list) and len(result) > 0:
                 self.stats['repaired'] += 1
                 valid_items = self._validate_and_filter(result, expected_type)
                 if valid_items:
-                    print(f"✓ Repaired JSON successfully using json-repair")
+                    print(f"✓ [JSONFixer] Success: Repaired successfully using json-repair ({len(valid_items)} valid items)")
                     return valid_items
         except Exception as e:
-            print(f"⚠️  json-repair failed: {str(e)}")
+            print(f"⚠️ [JSONFixer] json-repair failed: {str(e)}")
         
         # Complete failure
         self.stats['failures'] += 1
-        print(f"❌ Could not extract valid items - JSON repair failed")
+        print(f"❌ [JSONFixer] Failed: Could not extract valid items after all stages")
         raise Exception("Failed to parse or repair JSON")
     
     def _quick_fixes(self, text: str) -> str:
@@ -77,6 +101,25 @@ class JSONFixer:
         
         # Remove HTML tags (sometimes Gemini outputs HTML instead of pure JSON)
         text = self.HTML_TAGS.sub('', text)
+        
+        # --- BASIC FORMAT RECOVERY ---
+        
+        # Fix trailing commas before closing brackets/braces (most common LLM error)
+        text = re.sub(r',\s*]', ']', text)
+        text = re.sub(r',\s*}', '}', text)
+        
+        # Ensure it starts and ends with brackets if it looks like an array
+        if not text.startswith('[') and text.find('[') != -1:
+            text = text[text.find('['):]
+        if not text.endswith(']') and text.rfind(']') != -1:
+            text = text[:text.rfind(']')+1]
+            
+        # Fix truncated JSON (missing final brackets)
+        if text.startswith('[') and not text.endswith(']'):
+            if text.endswith('}'):
+                text += ']'
+            elif text.endswith('"'):
+                text += '}]'
         
         return text
     
@@ -95,6 +138,9 @@ class JSONFixer:
                 
             if expected_type == 'mcq':
                 if self._is_valid_mcq(item):
+                    valid_items.append(item)
+            elif expected_type == 'reviews':
+                if self._is_valid_review(item):
                     valid_items.append(item)
             else:
                 if self._is_valid_short_note(item):
@@ -133,6 +179,15 @@ class JSONFixer:
             return False
         if 'answer' not in note or not note['answer']:
             return False
+        return True
+
+    def _is_valid_review(self, review: Dict) -> bool:
+        """Strict validation for Review"""
+        if 'subject_code' not in review or not review['subject_code']:
+            return False
+        if 'review' not in review or not review['review']:
+            return False
+        # review_date is optional (can be null)
         return True
     
     def get_stats(self) -> Dict[str, int]:
