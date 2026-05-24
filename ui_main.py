@@ -392,15 +392,17 @@ class PDFGenThread(QThread):
 
     def run(self):
         try:
-            from pdf_generator import generate_pdf_from_json
+            from pdf_generator import generate_pdf_from_json, get_standardized_pdf_name
             total = len(self.json_paths)
             for i, json_path in enumerate(self.json_paths, 1):
                 self.log_signal.emit(f"Generating PDF {i}/{total}: {Path(json_path).name}", "info")
                 try:
+                    out_name = get_standardized_pdf_name(json_path)
                     out_path = None
                     if self.output_dir:
-                        out_name = Path(json_path).stem + ".pdf"
                         out_path = str(Path(self.output_dir) / out_name)
+                    else:
+                        out_path = str(Path(json_path).parent / out_name)
                     generated = generate_pdf_from_json(json_path, out_path)
                     self.log_signal.emit(f"  Saved: {generated}", "success")
                 except Exception as e:
@@ -2062,10 +2064,15 @@ class PDFGeneratorTab(QWidget):
         self.json_files = scan_json_files(root_path)
 
         # Check which JSON files already have a generated PDF
+        from folder_organizer import get_pdf_output_root
+        from pdf_generator import get_standardized_pdf_name
+        pdf_root = Path(get_pdf_output_root())
         for item in self.json_files:
             json_path = Path(item['path'])
-            pdf_sibling = json_path.with_suffix('.pdf')
-            item['has_pdf'] = pdf_sibling.exists()
+            std_name = get_standardized_pdf_name(str(json_path))
+            pdf_sibling = json_path.parent / std_name
+            pdf_in_root = pdf_root / std_name
+            item['has_pdf'] = pdf_sibling.exists() or pdf_in_root.exists()
 
         # Populate category combo
         categories = sorted(set(f['category'] for f in self.json_files))
@@ -2158,7 +2165,8 @@ class PDFGeneratorTab(QWidget):
             idx_item.setTextAlignment(Qt.AlignCenter)
             idx_item.setForeground(QColor(PALETTE['text_muted']))
 
-            pdf_name = Path(item['path']).with_suffix('.pdf').name
+            from pdf_generator import get_standardized_pdf_name
+            pdf_name = get_standardized_pdf_name(item['path'])
             name_item = QTableWidgetItem(pdf_name)
             name_item.setForeground(QColor(PALETTE['success']))
 
@@ -2290,10 +2298,15 @@ class PDFGeneratorTab(QWidget):
             self._add_gen_log(f"Done: {message}", "success")
 
             # Refresh has_pdf flags so converted files move to Generated section
+            from folder_organizer import get_pdf_output_root
+            from pdf_generator import get_standardized_pdf_name
+            pdf_root = Path(get_pdf_output_root())
             for item in self.json_files:
                 json_path = Path(item['path'])
-                pdf_sibling = json_path.with_suffix('.pdf')
-                item['has_pdf'] = pdf_sibling.exists()
+                std_name = get_standardized_pdf_name(str(json_path))
+                pdf_sibling = json_path.parent / std_name
+                pdf_in_root = pdf_root / std_name
+                item['has_pdf'] = pdf_sibling.exists() or pdf_in_root.exists()
 
             converted_count = len([f for f in self.json_files if f.get('has_pdf')])
             self.converted_toggle_btn.setText(f"{'Hide' if self.show_converted else 'Show'} Converted ({converted_count})")

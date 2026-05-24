@@ -580,7 +580,7 @@ class PDFCanvasWidget(QGraphicsView):
         elements = section_data.get('elements', [])
         self._current_elements = elements
 
-        for el in elements:
+        for i, el in enumerate(elements):
             el_type = el.get('type', 'text')
             if el_type == 'text':
                 item = DraggableTextItem(el, self.scale_factor)
@@ -591,6 +591,7 @@ class PDFCanvasWidget(QGraphicsView):
 
             self.scene.addItem(item)
             self._graphics_items.append(item)
+            item.setZValue(i)
 
             if selected_id and el.get('id') == selected_id:
                 item.setSelected(True)
@@ -795,6 +796,34 @@ class PDFCanvasWidget(QGraphicsView):
                     self._graphics_items.remove(item)
         self.elements_changed.emit()
         self.element_deselected.emit()
+
+    def bring_front_selected(self):
+        selected = self.scene.selectedItems()
+        if not selected or not hasattr(selected[0], 'element_data'): return
+        item = selected[0]
+        el = item.element_data
+        if el in self._current_elements:
+            self._current_elements.remove(el)
+            self._current_elements.append(el)
+            for i, current_el in enumerate(self._current_elements):
+                for g_item in self._graphics_items:
+                    if hasattr(g_item, 'element_data') and g_item.element_data == current_el:
+                        g_item.setZValue(i)
+            self.elements_changed.emit()
+
+    def send_back_selected(self):
+        selected = self.scene.selectedItems()
+        if not selected or not hasattr(selected[0], 'element_data'): return
+        item = selected[0]
+        el = item.element_data
+        if el in self._current_elements:
+            self._current_elements.remove(el)
+            self._current_elements.insert(0, el)
+            for i, current_el in enumerate(self._current_elements):
+                for g_item in self._graphics_items:
+                    if hasattr(g_item, 'element_data') and g_item.element_data == current_el:
+                        g_item.setZValue(i)
+            self.elements_changed.emit()
 
     def get_elements(self):
         return self._current_elements
@@ -1784,6 +1813,18 @@ class EditPDFTab(QWidget):
         self._del_btn.clicked.connect(self._delete_element)
         tb_layout.addWidget(self._del_btn)
 
+        self._bring_front_btn = QPushButton("⬆️ Front")
+        self._bring_front_btn.setMinimumHeight(30)
+        self._bring_front_btn.setStyleSheet(self._action_btn_style())
+        self._bring_front_btn.clicked.connect(self._bring_front)
+        tb_layout.addWidget(self._bring_front_btn)
+
+        self._send_back_btn = QPushButton("⬇️ Back")
+        self._send_back_btn.setMinimumHeight(30)
+        self._send_back_btn.setStyleSheet(self._action_btn_style())
+        self._send_back_btn.clicked.connect(self._send_back)
+        tb_layout.addWidget(self._send_back_btn)
+
         # Background image btn
         self._bg_btn = QPushButton("🖼 Background")
         self._bg_btn.setMinimumHeight(30)
@@ -1994,6 +2035,16 @@ class EditPDFTab(QWidget):
 
     def _delete_element(self):
         self._canvas.delete_selected()
+        elements = self._canvas.get_elements()
+        self.settings_mgr.set_elements(self._current_doc_type, self._current_section, elements)
+
+    def _bring_front(self):
+        self._canvas.bring_front_selected()
+        elements = self._canvas.get_elements()
+        self.settings_mgr.set_elements(self._current_doc_type, self._current_section, elements)
+
+    def _send_back(self):
+        self._canvas.send_back_selected()
         elements = self._canvas.get_elements()
         self.settings_mgr.set_elements(self._current_doc_type, self._current_section, elements)
 

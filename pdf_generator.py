@@ -668,8 +668,12 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
         raise ValueError("JSON file is empty or not a valid MCQ list")
 
     json_file = Path(json_path)
+    std_name = get_standardized_pdf_name(json_path)
     if output_path is None:
-        output_path = str(json_file.with_suffix('.pdf'))
+        output_path = str(json_file.parent / std_name)
+    else:
+        path_obj = Path(output_path)
+        output_path = str(path_obj.parent / std_name)
     if title is None:
         title = json_file.stem.replace('_', ' ').title()
 
@@ -952,8 +956,12 @@ def generate_short_notes_pdf(json_path: str, output_path: str = None, title: str
         raise ValueError("JSON file is empty or not a valid notes list")
 
     json_file = Path(json_path)
+    std_name = get_standardized_pdf_name(json_path)
     if output_path is None:
-        output_path = str(json_file.with_suffix('.pdf'))
+        output_path = str(json_file.parent / std_name)
+    else:
+        path_obj = Path(output_path)
+        output_path = str(path_obj.parent / std_name)
     if title is None:
         title = json_file.stem.replace('_', ' ').title()
 
@@ -1021,6 +1029,52 @@ def generate_short_notes_pdf(json_path: str, output_path: str = None, title: str
 
     print(f"✓ Notes PDF generated: {output_path}")
     return output_path
+
+
+def get_standardized_pdf_name(json_path: str) -> str:
+    """
+    Generate the standardized PDF filename based on the JSON path/filename.
+    Format: {Subject}_{Term}_{Type}_BY_VUEDU.pdf
+    E.g.: CS301_Mids_MCQs_BY_VUEDU.pdf
+    """
+    import re
+    path_obj = Path(json_path)
+    stem = path_obj.stem
+    
+    # 1. Subject extraction
+    subject = "MISC"
+    match = re.search(r'([A-Za-z]+\d+)', stem)
+    if match:
+        subject = match.group(1).upper()
+    
+    # 2. Term extraction
+    term = "Mids"
+    stem_lower = stem.lower()
+    if "final" in stem_lower:
+        term = "Finals"
+    elif "mid" in stem_lower:
+        term = "Mids"
+    
+    # 3. Type extraction
+    doc_type = "MCQs"
+    if "note" in stem_lower:
+        doc_type = "Short-Notes"
+    elif "mcq" in stem_lower:
+        doc_type = "MCQs"
+    else:
+        # Check inside the file if possible to be absolutely sure
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if data and isinstance(data, list) and len(data) > 0:
+                if 'options' in data[0]:
+                    doc_type = "MCQs"
+                elif 'answer' in data[0]:
+                    doc_type = "Short-Notes"
+        except Exception:
+            pass
+            
+    return f"{subject}_{term}_{doc_type}_BY_VUEDU.pdf"
 
 
 def generate_pdf_from_json(json_path: str, output_path: str = None) -> str:

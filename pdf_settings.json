@@ -14,7 +14,7 @@
         "question_size": 10,
         "option_size": 9,
         "explanation_size": 9,
-        "explanation_bg_color": "#d3ecff",
+        "explanation_bg_color": "#e5f5ff",
         "explanation_text_color": "#1e293b",
         "explanation_padding": 6
     },
