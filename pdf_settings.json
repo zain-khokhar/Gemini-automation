@@ -1,0 +1,47 @@
+{
+    "templates": {
+        "mcq_bg": "",
+        "notes_bg": "",
+        "use_templates": true
+    },
+    "layout": {
+        "margin_top": 20,
+        "margin_bottom": 25,
+        "margin_left": 20,
+        "margin_right": 20,
+        "font_family": "Outfit",
+        "title_size": 18,
+        "question_size": 10,
+        "option_size": 9,
+        "explanation_size": 9,
+        "explanation_bg_color": "#d3ecff",
+        "explanation_text_color": "#1e293b",
+        "explanation_padding": 6
+    },
+    "header": {
+        "enabled": true,
+        "text": "VUEDU - Virtual University Education Hub",
+        "url": "https://www.vuedu.pk",
+        "color": "#1642a8",
+        "font_size": 8,
+        "show_line": true
+    },
+    "footer": {
+        "enabled": true,
+        "text": "{page_num}",
+        "url": "",
+        "color": "#6b7280",
+        "font_size": 8,
+        "show_line": true
+    },
+    "first_page": {
+        "enabled": true,
+        "content_text": "",
+        "bg_image": ""
+    },
+    "last_page": {
+        "enabled": true,
+        "content_text": "",
+        "bg_image": ""
+    }
+}

@@ -9,6 +9,14 @@ import os
 import time
 import shutil
 
+# Fix Unicode/emoji output on Windows terminals (cp1252 doesn't support emoji)
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 def find_python():
     """Find Python executable on the system"""
     # Try common Python commands
@@ -85,9 +93,12 @@ def main():
         # Start Python UI
         print("\n🖥️  Starting Python UI...")
         ui_main_path = os.path.join(script_dir, "ui_main.py")
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
         python_process = subprocess.Popen(
             [python_exe, ui_main_path],
-            cwd=script_dir
+            cwd=script_dir,
+            env=env
         )
         
         print("\n✅ Both services started successfully!")

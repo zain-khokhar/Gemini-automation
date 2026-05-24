@@ -7,6 +7,9 @@ import sys
 import os
 import json
 from pathlib import Path
+from PyQt5.QtWidgets import QColorDialog
+from pdf_settings import PDFSettingsManager
+from pdf_editor import EditPDFTab
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -15,10 +18,11 @@ from PyQt5.QtWidgets import (
     QSpinBox, QScrollArea, QSizePolicy, QComboBox, QListWidget,
     QListWidgetItem, QCheckBox, QTabWidget, QMessageBox,
     QAbstractItemView, QSplitter, QTableWidget, QTableWidgetItem,
-    QHeaderView, QToolButton, QGroupBox, QDialog, QPlainTextEdit
+    QHeaderView, QToolButton, QGroupBox, QDialog, QPlainTextEdit,
+    QToolTip
 )
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QFont, QTextCursor, QColor, QIcon, QPalette
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QEvent, QElapsedTimer
+from PyQt5.QtGui import QFont, QTextCursor, QColor, QIcon, QPalette, QKeySequence
 
 from processing_thread import ProcessingThread, BatchProcessingThread
 from state_manager import StateManager
@@ -62,7 +66,7 @@ APP_STYLE = f"""
 QMainWindow, QWidget {{
     background-color: {PALETTE['bg']};
     color: {PALETTE['text_primary']};
-    font-family: 'Segoe UI', 'Inter', sans-serif;
+    font-family: 'Google Sans Flex', 'Outfit', 'Montserrat', 'Poppins', 'Inter', sans-serif;
     font-size: 10pt;
 }}
 
@@ -418,7 +422,25 @@ class ProcessingTab(QWidget):
         self.filtered_pdfs = []      # currently shown in list
         self.categories = {}         # {category_name: [pdf_paths]}
         self.index_map = {}          # {pdf_path: stable_id} e.g., CS01, MCM02
+        # Feature 1/2: init auto-parse state before _build_ui (used in eventFilter)
+        self._auto_parse_enabled = True
+        self._last_paste_ms = 0
+        self._paste_block_ms = 600
         self._build_ui()
+        self._setup_processed_search()
+        # Feature 7: Load persisted settings (after widgets exist)
+        self._load_settings_from_config()
+        # Feature 7: Connect settings auto-save
+        self._connect_settings_persistence()
+        # Feature 1+2: Setup auto-parse & paste protection
+        self._setup_auto_parse()
+        # Feature 5: Connect double-click
+        self.pdf_table.cellDoubleClicked.connect(self._on_pdf_table_double_click)
+        # Feature 4: Connect selection input changes
+        self.selection_input.textChanged.connect(self._update_selection_warning)
+        self.mids_radio.toggled.connect(lambda _: self._update_selection_warning())
+        self.finals_radio.toggled.connect(lambda _: self._update_selection_warning())
+        self.both_radio.toggled.connect(lambda _: self._update_selection_warning())
         self._load_root_folder_from_config()
         self._load_last_state()
 
@@ -538,8 +560,23 @@ class ProcessingTab(QWidget):
         sel_input_row.addWidget(self.selection_input)
         sel_layout.addLayout(sel_input_row)
 
-        hint = label_muted("Use stable IDs (CS01, MCM02) or numeric indexes. Leave empty for all.")
+        hint = label_muted("Use stable IDs (CS01, MCM02) or numeric indexes. Leave empty for all.  |  Double-click a PDF row to add its ID.")
         sel_layout.addWidget(hint)
+
+        # Feature 4: Warning label for already-processed PDFs
+        self.selection_warning_label = QLabel("")
+        self.selection_warning_label.setStyleSheet(f"""
+            color: {PALETTE['error']};
+            font-size: 9pt;
+            font-weight: 600;
+            background: #fff0f0;
+            border: 1px solid {PALETTE['error']};
+            border-radius: 5px;
+            padding: 3px 8px;
+        """)
+        self.selection_warning_label.setWordWrap(True)
+        self.selection_warning_label.setVisible(False)
+        sel_layout.addWidget(self.selection_warning_label)
         settings_row.addWidget(sel_card, 2)
 
         # Section card
@@ -567,6 +604,9 @@ class ProcessingTab(QWidget):
         content_layout.addWidget(label_secondary("Reviews Context"))
         self.mcq_reviews_check = QCheckBox("Use reviews for MCQs")
         self.notes_reviews_check = QCheckBox("Use reviews for Notes")
+        # Feature 3: Default both review checkboxes to enabled
+        self.mcq_reviews_check.setChecked(True)
+        self.notes_reviews_check.setChecked(True)
         self.mcq_reviews_check.setToolTip("Include student reviews in MCQ generation prompts for better relevance")
         self.notes_reviews_check.setToolTip("Include student reviews in Short Notes generation prompts for better relevance")
         content_layout.addWidget(self.mcq_reviews_check)
@@ -817,6 +857,91 @@ class ProcessingTab(QWidget):
         """)
         log_layout.addWidget(self.log_text)
         root_layout.addWidget(log_card)
+
+        # ── Feature 6: Processed PDFs search card (collapsible) ──
+        self.processed_search_btn = QPushButton("🔍  Processed PDFs  ▼")
+        self.processed_search_btn.setFixedHeight(32)
+        self.processed_search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9.5pt;
+                font-weight: 500;
+                padding: 4px 16px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['success']};
+                color: {PALETTE['success']};
+                background: {PALETTE['row_hover']};
+            }}
+        """)
+        self.processed_search_btn.clicked.connect(self._toggle_processed_search_card)
+        root_layout.addWidget(self.processed_search_btn)
+
+        self.processed_search_card, proc_layout = make_card('v', (14, 12, 14, 12), 8)
+
+        proc_header = QHBoxLayout()
+        proc_header.addWidget(label_secondary("Search Processed PDFs"))
+        proc_header.addStretch()
+
+        self.processed_count_label = label_muted("0 results")
+        proc_header.addWidget(self.processed_count_label)
+
+        refresh_proc_btn = QPushButton("Scan")
+        refresh_proc_btn.setFixedHeight(26)
+        refresh_proc_btn.setFixedWidth(60)
+        refresh_proc_btn.setStyleSheet(f"font-size: 8.5pt; padding: 2px 8px;")
+        refresh_proc_btn.clicked.connect(self._load_processed_pdfs)
+        proc_header.addWidget(refresh_proc_btn)
+        proc_layout.addLayout(proc_header)
+
+        self.processed_search_input = QLineEdit()
+        self.processed_search_input.setPlaceholderText("Search by PDF name or subject code (e.g. CS101)...")
+        self.processed_search_input.setMinimumHeight(32)
+        self.processed_search_input.textChanged.connect(self._filter_processed_pdfs)
+        proc_layout.addWidget(self.processed_search_input)
+
+        self.processed_table = QTableWidget(0, 3)
+        self.processed_table.setHorizontalHeaderLabels(["Subject", "PDF Name", "Status"])
+        self.processed_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.processed_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.processed_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.processed_table.setColumnWidth(0, 80)
+        self.processed_table.setColumnWidth(2, 220)
+        self.processed_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.processed_table.setAlternatingRowColors(True)
+        self.processed_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.processed_table.verticalHeader().setVisible(False)
+        self.processed_table.setMinimumHeight(120)
+        self.processed_table.setMaximumHeight(200)
+        self.processed_table.setShowGrid(False)
+        self.processed_table.setStyleSheet(f"""
+            QTableWidget {{
+                alternate-background-color: {PALETTE['row_alt']};
+            }}
+        """)
+        proc_layout.addWidget(self.processed_table)
+
+        proc_hint = label_muted("This shows only PDFs that have already been processed. Click 'Scan' to refresh.")
+        proc_layout.addWidget(proc_hint)
+
+        self.processed_search_card.setVisible(False)
+        root_layout.addWidget(self.processed_search_card)
+
+    def _toggle_processed_search_card(self):
+        """Toggle the processed PDFs search card visibility."""
+        visible = not self.processed_search_card.isVisible()
+        self.processed_search_card.setVisible(visible)
+        if visible:
+            self.processed_search_btn.setText("🔍  Processed PDFs  ▲")
+            # Auto-scan on first open
+            if not self._processed_pdfs_data:
+                self._load_processed_pdfs()
+        else:
+            self.processed_search_btn.setText("🔍  Processed PDFs  ▼")
 
     # ── Private helpers ───────────────────────────────────────
 
@@ -1312,6 +1437,327 @@ class ProcessingTab(QWidget):
             self.add_log(f"Last state: {summary}", "info")
         self.add_log("Application ready. Select a root folder to begin.", "success")
         self.add_log("Make sure the Gemini server is running (npm start).", "warning")
+
+    # ── Feature 7: Settings persistence ──────────────────────
+
+    def _load_settings_from_config(self):
+        """Load all persisted settings from config.json and apply to widgets."""
+        cfg = self._read_config()
+
+        # Advanced settings spinboxes
+        delay = cfg.get('delay_seconds', 1)
+        pages = cfg.get('pages_per_batch', 10)
+        reset = cfg.get('chat_reset_threshold', 5)
+        self.delay_spin.setValue(int(delay))
+        self.pages_spin.setValue(int(pages))
+        self.reset_spin.setValue(int(reset))
+
+        # Reviews checkboxes (defaults to True per Feature 3)
+        self.mcq_reviews_check.setChecked(cfg.get('reviews_for_mcqs', True))
+        self.notes_reviews_check.setChecked(cfg.get('reviews_for_notes', True))
+
+        # Content checkboxes
+        self.mcq_check.setChecked(cfg.get('content_mcq', True))
+        self.notes_check.setChecked(cfg.get('content_notes', False))
+
+        # Section radio buttons
+        section = cfg.get('selected_section', 'both')
+        if section == 'mids':
+            self.mids_radio.setChecked(True)
+        elif section == 'finals':
+            self.finals_radio.setChecked(True)
+        else:
+            self.both_radio.setChecked(True)
+
+        # Auto-parse toggle (Feature 1)
+        auto_parse = cfg.get('auto_parse_enabled', True)
+        self._auto_parse_enabled = auto_parse
+
+    def _connect_settings_persistence(self):
+        """Connect all settings widgets to auto-save on change."""
+        self.delay_spin.valueChanged.connect(lambda v: self._write_config_key('delay_seconds', v))
+        self.pages_spin.valueChanged.connect(lambda v: self._write_config_key('pages_per_batch', v))
+        self.reset_spin.valueChanged.connect(lambda v: self._write_config_key('chat_reset_threshold', v))
+        self.mcq_reviews_check.stateChanged.connect(
+            lambda s: self._write_config_key('reviews_for_mcqs', bool(s)))
+        self.notes_reviews_check.stateChanged.connect(
+            lambda s: self._write_config_key('reviews_for_notes', bool(s)))
+        self.mcq_check.stateChanged.connect(
+            lambda s: self._write_config_key('content_mcq', bool(s)))
+        self.notes_check.stateChanged.connect(
+            lambda s: self._write_config_key('content_notes', bool(s)))
+        self.mids_radio.toggled.connect(
+            lambda checked: self._write_config_key('selected_section', 'mids') if checked else None)
+        self.finals_radio.toggled.connect(
+            lambda checked: self._write_config_key('selected_section', 'finals') if checked else None)
+        self.both_radio.toggled.connect(
+            lambda checked: self._write_config_key('selected_section', 'both') if checked else None)
+
+    # ── Feature 1 + 2: Auto-parse + Ctrl+V protection ─────────
+
+    def _setup_auto_parse(self):
+        """
+        Feature 1: Auto-parse JSON on paste (with debounce).
+        Feature 2: Block double Ctrl+V within 500ms.
+        """
+        self._auto_parse_timer = QTimer()
+        self._auto_parse_timer.setSingleShot(True)
+        self._auto_parse_timer.setInterval(350)  # 350ms debounce
+        self._auto_parse_timer.timeout.connect(self._auto_submit_if_active)
+
+        self._last_paste_ms = 0  # timestamp of last paste (ms)
+        self._paste_block_ms = 600  # block second paste within 600ms
+
+        # Install event filter on json_paste for Ctrl+V detection
+        self.json_paste.installEventFilter(self)
+
+        # Also watch text changes to detect paste content landing
+        self.json_paste.textChanged.connect(self._on_json_paste_text_changed)
+
+    def eventFilter(self, obj, event):
+        """Intercept Ctrl+V on json_paste for double-paste protection."""
+        if obj is self.json_paste and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
+                import time
+                now_ms = int(time.time() * 1000)
+                delta = now_ms - self._last_paste_ms
+                if delta < self._paste_block_ms and self._last_paste_ms > 0:
+                    # Block the second paste
+                    self.add_log("⚠️ Duplicate paste blocked (too fast)", "warning")
+                    # Flash border orange briefly
+                    self.json_paste.setStyleSheet(f"""
+                        QPlainTextEdit {{
+                            background: {PALETTE['bg']};
+                            font-family: 'Consolas', 'Courier New', monospace;
+                            font-size: 9.5pt;
+                            border: 2px solid {PALETTE['warning']};
+                            border-radius: 7px;
+                            padding: 8px;
+                        }}
+                    """)
+                    QTimer.singleShot(800, self._reset_paste_border)
+                    return True  # Block the event
+                self._last_paste_ms = now_ms
+        return super().eventFilter(obj, event)
+
+    def _reset_paste_border(self):
+        """Reset json_paste border to normal."""
+        self.json_paste.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background: {PALETTE['bg']};
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9.5pt;
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                padding: 8px;
+            }}
+        """)
+
+    def _on_json_paste_text_changed(self):
+        """When text is pasted, start debounce timer for auto-parse."""
+        if self._auto_parse_enabled and self.submit_json_btn.isEnabled():
+            # Only auto-parse if there's actual content
+            if self.json_paste.toPlainText().strip():
+                self._auto_parse_timer.start()
+
+    def _auto_submit_if_active(self):
+        """Called after debounce — auto-submit if conditions are met."""
+        if not self._auto_parse_enabled:
+            return
+        if not self.submit_json_btn.isEnabled():
+            return
+        text = self.json_paste.toPlainText().strip()
+        if not text:
+            return
+        # Only auto-submit if it looks like JSON (starts with [ or {)
+        if not (text.startswith('[') or text.startswith('{') or '```json' in text or '```' in text):
+            return
+        self.add_log("⚡ Auto-parsing pasted JSON...", "info")
+        self._on_submit_json()
+
+    def set_auto_parse(self, enabled: bool):
+        """Toggle auto-parse feature and persist to config."""
+        self._auto_parse_enabled = enabled
+        self._write_config_key('auto_parse_enabled', enabled)
+
+    # ── Feature 4: Already-processed detection ─────────────
+
+    def _get_current_section_mode(self) -> str:
+        """Return 'mids', 'finals', or 'both' based on selected radio."""
+        if self.mids_radio.isChecked():
+            return 'mids'
+        elif self.finals_radio.isChecked():
+            return 'finals'
+        return 'both'
+
+    def _check_processed_status(self, stable_id: str) -> dict:
+        """
+        Given a stable ID (e.g., CS01), find the PDF path and check if it's been processed.
+        Returns processing status dict or None if not found.
+        """
+        from folder_organizer import get_processed_pdf_status
+        # Reverse lookup: stable_id -> pdf_path
+        for pdf_path, sid in self.index_map.items():
+            if sid.upper() == stable_id.upper():
+                pdf_name = Path(pdf_path).stem
+                return get_processed_pdf_status(pdf_name)
+        return None
+
+    def _update_selection_warning(self):
+        """
+        Feature 4: Check each entered ID in selection_input.
+        Show a warning label if any are already processed (based on section mode).
+        """
+        text = self.selection_input.text().strip()
+        if not text or not self.index_map:
+            self.selection_warning_label.setVisible(False)
+            return
+
+        section_mode = self._get_current_section_mode()
+        tokens = [t.strip().upper() for t in text.replace(',', ' ').split() if t.strip()]
+
+        # Also handle ranges like CS01-CS05 — extract just the IDs
+        ids_to_check = []
+        for token in tokens:
+            if '-' in token and not token.lstrip('-').isdigit():
+                # Could be a range like CS01-CS05 or just CS01
+                parts = token.split('-', 1)
+                for p in parts:
+                    if p and not p.isdigit():
+                        ids_to_check.append(p)
+            elif not token.isdigit():
+                ids_to_check.append(token)
+
+        if not ids_to_check:
+            self.selection_warning_label.setVisible(False)
+            return
+
+        # Build reverse map: stable_id_upper -> pdf_path
+        id_to_path = {sid.upper(): p for p, sid in self.index_map.items()}
+
+        flagged = []
+        for sid in ids_to_check:
+            if sid not in id_to_path:
+                continue
+            pdf_path = id_to_path[sid]
+            pdf_name = Path(pdf_path).stem
+            try:
+                from folder_organizer import get_processed_pdf_status
+                status = get_processed_pdf_status(pdf_name)
+            except Exception:
+                continue
+
+            should_flag = False
+            if section_mode == 'mids' and status['mids_processed']:
+                should_flag = True
+            elif section_mode == 'finals' and status['finals_processed']:
+                should_flag = True
+            elif section_mode == 'both' and (status['mids_processed'] or status['finals_processed']):
+                should_flag = True
+
+            if should_flag:
+                flagged.append((sid, status))
+
+        if flagged:
+            # Build tooltip HTML for hover details
+            tooltip_parts = []
+            warn_ids = []
+            for sid, st in flagged:
+                mids_info = f"✓ {st['mids_mcqs']} MCQs, {st['mids_notes']} Notes" if st['mids_processed'] else "✗ Not processed"
+                finals_info = f"✓ {st['finals_mcqs']} MCQs, {st['finals_notes']} Notes" if st['finals_processed'] else "✗ Not processed"
+                tooltip_parts.append(
+                    f"{sid}\n  Mids:   {mids_info}\n  Finals: {finals_info}"
+                )
+                warn_ids.append(sid)
+
+            tooltip_text = "\n\n".join(tooltip_parts)
+            warn_text = ", ".join(warn_ids)
+
+            self.selection_warning_label.setText(
+                f"⚠ Already processed: {warn_text}  (hover for details)"
+            )
+            self.selection_warning_label.setToolTip(tooltip_text)
+            self.selection_warning_label.setVisible(True)
+        else:
+            self.selection_warning_label.setVisible(False)
+
+    # ── Feature 5: Double-click to add index code ─────────────
+
+    def _on_pdf_table_double_click(self, row, col):
+        """Feature 5: Double-click a row to add its index code to selection_input."""
+        idx_item = self.pdf_table.item(row, 0)
+        if not idx_item:
+            return
+        stable_id = idx_item.data(Qt.UserRole)
+        if not stable_id:
+            stable_id = idx_item.text()
+        if not stable_id:
+            return
+
+        current = self.selection_input.text().strip()
+        # Avoid duplicates
+        existing_ids = [x.strip().upper() for x in current.split(',') if x.strip()]
+        if stable_id.upper() not in existing_ids:
+            if current:
+                self.selection_input.setText(current + ',' + stable_id)
+            else:
+                self.selection_input.setText(stable_id)
+
+    # ── Feature 6: Processed PDFs search ─────────────────────
+
+    def _setup_processed_search(self):
+        """Set up the processed PDFs search data."""
+        self._processed_pdfs_data = []  # Will be populated on demand
+
+    def _load_processed_pdfs(self):
+        """Scan and load all processed PDFs from JSON output folder."""
+        try:
+            from folder_organizer import scan_all_processed_pdfs
+            self._processed_pdfs_data = scan_all_processed_pdfs()
+            self._filter_processed_pdfs()
+            count = len(self._processed_pdfs_data)
+            self.processed_count_label.setText(f"{count} processed PDFs found")
+        except Exception as e:
+            self.processed_count_label.setText(f"Scan failed: {str(e)[:50]}")
+
+    def _filter_processed_pdfs(self):
+        """Filter processed PDFs based on search text."""
+        search = self.processed_search_input.text().strip().lower()
+        data = self._processed_pdfs_data
+
+        if search:
+            data = [d for d in data
+                    if search in d['pdf_name'].lower()
+                    or search in d['subject_code'].lower()]
+
+        self.processed_table.setRowCount(0)
+        for item in data:
+            row = self.processed_table.rowCount()
+            self.processed_table.insertRow(row)
+
+            code_item = QTableWidgetItem(item['subject_code'])
+            code_item.setTextAlignment(Qt.AlignCenter)
+            code_item.setForeground(QColor(PALETTE['accent']))
+
+            name_item = QTableWidgetItem(item['pdf_name'])
+            name_item.setForeground(QColor(PALETTE['text_primary']))
+
+            # Status column
+            parts = []
+            if item['mids_processed']:
+                parts.append(f"Mids:{item['mids_mcqs']}MCQs/{item['mids_notes']}Notes")
+            if item['finals_processed']:
+                parts.append(f"Finals:{item['finals_mcqs']}MCQs/{item['finals_notes']}Notes")
+            status_text = "  |  ".join(parts) if parts else "—"
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(QColor(PALETTE['success']))
+            status_item.setTextAlignment(Qt.AlignCenter)
+
+            self.processed_table.setItem(row, 0, code_item)
+            self.processed_table.setItem(row, 1, name_item)
+            self.processed_table.setItem(row, 2, status_item)
+
+        self.processed_count_label.setText(f"{len(data)} results")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2857,6 +3303,12 @@ class ReviewsTab(QWidget):
                 self._add_log(f"❌ Delete failed: {str(e)}", "error")
 
 
+# ─────────────────────────────────────────────────────────────
+#  EDIT PDF TAB — Now imported from pdf_editor.py
+#  (EditPDFTab is imported at the top of this file)
+# ─────────────────────────────────────────────────────────────
+
+
 #  MAIN WINDOW
 # ─────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
@@ -2899,7 +3351,7 @@ class MainWindow(QMainWindow):
 
         # Tab buttons
         self._nav_btns = []
-        for i, text in enumerate(["Processing", "PDF Generator", "Reviews"]):
+        for i, text in enumerate(["Processing", "PDF Generator", "Reviews", "Edit PDF"]):
             btn = QPushButton(text)
             btn.setCheckable(True)
             btn.setFixedHeight(52)
@@ -2928,6 +3380,24 @@ class MainWindow(QMainWindow):
             nav_layout.addWidget(btn)
             self._nav_btns.append(btn)
 
+        # ── Feature 1: Auto-Parse toggle button in navbar ─────
+        nav_sep = QLabel("|")
+        nav_sep.setStyleSheet(f"color: {PALETTE['text_muted']}; padding: 0 8px; font-size: 14pt;")
+        nav_layout.addWidget(nav_sep)
+
+        self.auto_parse_btn = QPushButton("⚡ Auto-Parse")
+        self.auto_parse_btn.setCheckable(True)
+        self.auto_parse_btn.setFixedHeight(32)
+        self.auto_parse_btn.setMinimumWidth(120)
+        self.auto_parse_btn.setToolTip(
+            "Auto-Parse ON: JSON pasted into the input box will be submitted automatically.\n"
+            "Auto-Parse OFF: You must click 'Submit JSON' manually."
+        )
+        self._update_auto_parse_btn_style(True)
+        self.auto_parse_btn.clicked.connect(self._toggle_auto_parse)
+        nav_layout.addWidget(self.auto_parse_btn)
+        nav_layout.addSpacing(12)
+
         main_vbox.addWidget(navbar)
 
         # ── Content area ──────────────────────────────────────
@@ -2946,10 +3416,12 @@ class MainWindow(QMainWindow):
         self.processing_tab = ProcessingTab()
         self.pdf_gen_tab = PDFGeneratorTab()
         self.reviews_tab = ReviewsTab()
+        self.edit_pdf_tab = EditPDFTab()
 
         self.stack_layout.addWidget(self.processing_tab)
         self.stack_layout.addWidget(self.pdf_gen_tab)
         self.stack_layout.addWidget(self.reviews_tab)
+        self.stack_layout.addWidget(self.edit_pdf_tab)
 
         self.scroll_area.setWidget(self.content_stack)
         main_vbox.addWidget(self.scroll_area)
@@ -2961,9 +3433,67 @@ class MainWindow(QMainWindow):
         self.processing_tab.setVisible(idx == 0)
         self.pdf_gen_tab.setVisible(idx == 1)
         self.reviews_tab.setVisible(idx == 2)
+        self.edit_pdf_tab.setVisible(idx == 3)
 
         for i, btn in enumerate(self._nav_btns):
             btn.setChecked(i == idx)
+
+    def _update_auto_parse_btn_style(self, enabled: bool):
+        """Update the Auto-Parse toggle button appearance based on state."""
+        self.auto_parse_btn.setChecked(enabled)
+        if enabled:
+            self.auto_parse_btn.setText("⚡ Auto-Parse: ON")
+            self.auto_parse_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {PALETTE['success']};
+                    color: white;
+                    border: none;
+                    border-radius: 7px;
+                    font-size: 9pt;
+                    font-weight: 600;
+                    padding: 4px 14px;
+                }}
+                QPushButton:hover {{
+                    background: #16a34a;
+                }}
+            """)
+        else:
+            self.auto_parse_btn.setText("⚡ Auto-Parse: OFF")
+            self.auto_parse_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(255,255,255,0.12);
+                    color: {PALETTE['text_muted']};
+                    border: 1px solid rgba(255,255,255,0.2);
+                    border-radius: 7px;
+                    font-size: 9pt;
+                    font-weight: 500;
+                    padding: 4px 14px;
+                }}
+                QPushButton:hover {{
+                    background: rgba(255,255,255,0.2);
+                    color: white;
+                }}
+            """)
+
+    def _toggle_auto_parse(self):
+        """Toggle the auto-parse feature and sync with ProcessingTab."""
+        # Get current state from ProcessingTab
+        current = self.processing_tab._auto_parse_enabled
+        new_state = not current
+        # Update ProcessingTab
+        self.processing_tab.set_auto_parse(new_state)
+        # Update navbar button appearance
+        self._update_auto_parse_btn_style(new_state)
+        # Log the change
+        state_text = "ON" if new_state else "OFF"
+        self.processing_tab.add_log(f"⚡ Auto-Parse toggled {state_text}", "info")
+
+    def showEvent(self, event):
+        """Sync the navbar Auto-Parse button state on window show."""
+        super().showEvent(event)
+        # Sync button with loaded config state
+        enabled = self.processing_tab._auto_parse_enabled
+        self._update_auto_parse_btn_style(enabled)
 
 
 # ─────────────────────────────────────────────────────────────

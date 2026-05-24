@@ -1,10 +1,18 @@
 {
     "gemini_server_url": "http://localhost:3000",
-    "pages_per_batch": 5,
+    "pages_per_batch": 12,
     "mids_percentage": 95,
     "mcqs_per_batch": 10,
     "request_timeout_seconds": 200,
     "root_folder_path": "E:/documents/vu-plan-handouts",
     "json_output_root": "",
-    "pdf_output_root": ""
+    "pdf_output_root": "",
+    "delay_seconds": 1,
+    "chat_reset_threshold": 5,
+    "auto_parse_enabled": true,
+    "reviews_for_mcqs": true,
+    "reviews_for_notes": true,
+    "selected_section": "mids",
+    "content_mcq": true,
+    "content_notes": true
 }

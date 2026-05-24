@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "topic": "Operating System Basics",
+    "content": "An operating system manages hardware resources and provides services for software applications.",
+    "importance": "High"
+  },
+  {
+    "id": 2,
+    "topic": "Process Management",
+    "content": "Process management involves tracking processes, scheduling them, and managing context switches.",
+    "importance": "High"
+  }
+]

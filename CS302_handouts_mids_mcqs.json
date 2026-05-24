@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "question": "What is the primary function of an operating system?",
+    "options": [
+      "A. To provide a user interface",
+      "B. To manage hardware and software resources",
+      "C. To connect to the internet",
+      "D. To compile source code"
+    ],
+    "correct": "B",
+    "explanation": "The primary function of an OS is resource management.",
+    "difficulty": "Medium",
+    "importance": "High"
+  },
+  {
+    "id": 2,
+    "question": "Which of the following is not an operating system?",
+    "options": [
+      "A. Windows",
+      "B. Linux",
+      "C. Oracle",
+      "D. macOS"
+    ],
+    "correct": "C",
+    "explanation": "Oracle is a database management system, not an OS.",
+    "difficulty": "Easy",
+    "importance": "Medium"
+  }
+]

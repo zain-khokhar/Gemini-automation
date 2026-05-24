@@ -261,3 +261,169 @@ def build_index_map(pdf_paths: list) -> dict:
             index_map[pdf_path] = stable_id
     
     return index_map
+
+
+def get_processed_pdf_status(pdf_name: str) -> dict:
+    """
+    Check the processing status of a PDF by looking for existing output JSON files.
+    
+    Checks the organized JSON output folder for:
+    - Mids MCQs file
+    - Finals MCQs file
+    - Mids Short Notes file
+    - Finals Short Notes file
+    
+    Args:
+        pdf_name: PDF name without extension (e.g., 'CS101 handouts_1')
+    
+    Returns:
+        Dictionary with:
+        {
+            'mids_mcqs': int (count or 0),
+            'finals_mcqs': int (count or 0),
+            'mids_notes': int (count or 0),
+            'finals_notes': int (count or 0),
+            'mids_processed': bool,
+            'finals_processed': bool,
+        }
+    """
+    import json as _json
+    
+    result = {
+        'mids_mcqs': 0,
+        'finals_mcqs': 0,
+        'mids_notes': 0,
+        'finals_notes': 0,
+        'mids_processed': False,
+        'finals_processed': False,
+    }
+    
+    subject_code = extract_subject_code(pdf_name)
+    base_dir = Path(get_json_output_root())
+    
+    if subject_code:
+        pdf_folder = base_dir / subject_code / pdf_name
+    else:
+        # Fallback — can't determine path without full source path
+        return result
+    
+    if not pdf_folder.exists():
+        return result
+    
+    # Check mids
+    mids_folder = pdf_folder / "mids"
+    if mids_folder.exists():
+        # MCQs
+        mcq_file = mids_folder / f"{pdf_name}_mids_mcqs.json"
+        if mcq_file.exists():
+            try:
+                with open(mcq_file, 'r', encoding='utf-8') as f:
+                    data = _json.load(f)
+                if isinstance(data, list):
+                    result['mids_mcqs'] = len(data)
+                    result['mids_processed'] = True
+            except Exception:
+                pass
+        
+        # Short Notes
+        notes_file = mids_folder / f"short note {pdf_name}_mids.json"
+        if notes_file.exists():
+            try:
+                with open(notes_file, 'r', encoding='utf-8') as f:
+                    data = _json.load(f)
+                if isinstance(data, list):
+                    result['mids_notes'] = len(data)
+                    result['mids_processed'] = True
+            except Exception:
+                pass
+    
+    # Check finals
+    finals_folder = pdf_folder / "finals"
+    if finals_folder.exists():
+        # MCQs
+        mcq_file = finals_folder / f"{pdf_name}_finals_mcqs.json"
+        if mcq_file.exists():
+            try:
+                with open(mcq_file, 'r', encoding='utf-8') as f:
+                    data = _json.load(f)
+                if isinstance(data, list):
+                    result['finals_mcqs'] = len(data)
+                    result['finals_processed'] = True
+            except Exception:
+                pass
+        
+        # Short Notes
+        notes_file = finals_folder / f"short note {pdf_name}_finals.json"
+        if notes_file.exists():
+            try:
+                with open(notes_file, 'r', encoding='utf-8') as f:
+                    data = _json.load(f)
+                if isinstance(data, list):
+                    result['finals_notes'] = len(data)
+                    result['finals_processed'] = True
+            except Exception:
+                pass
+    
+    return result
+
+
+def scan_all_processed_pdfs() -> list:
+    """
+    Scan the JSON output root for all processed PDFs.
+    
+    Returns:
+        List of dicts:
+        [
+            {
+                'pdf_name': str,
+                'subject_code': str,
+                'index_code': str (e.g., 'CS01' — placeholder, assigned later),
+                'mids_mcqs': int,
+                'finals_mcqs': int,
+                'mids_notes': int,
+                'finals_notes': int,
+                'mids_processed': bool,
+                'finals_processed': bool,
+            }
+        ]
+    """
+    import json as _json
+    
+    base_dir = Path(get_json_output_root())
+    results = []
+    
+    if not base_dir.exists():
+        return results
+    
+    for subject_dir in sorted(base_dir.iterdir()):
+        if not subject_dir.is_dir():
+            continue
+        
+        subject_code = subject_dir.name
+        
+        # Skip reviews-only folders and non-subject folders
+        if subject_code.startswith('.') or subject_code.startswith('_'):
+            continue
+        
+        for pdf_folder in sorted(subject_dir.iterdir()):
+            if not pdf_folder.is_dir():
+                continue
+            
+            pdf_name = pdf_folder.name
+            
+            # Skip if it's a reviews file
+            if pdf_name.startswith('reviews'):
+                continue
+            
+            status = get_processed_pdf_status(pdf_name)
+            
+            # Only include if actually processed
+            if status['mids_processed'] or status['finals_processed']:
+                results.append({
+                    'pdf_name': pdf_name,
+                    'subject_code': subject_code,
+                    'index_code': '',  # Will be assigned by caller if needed
+                    **status
+                })
+    
+    return results
