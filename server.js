@@ -273,6 +273,235 @@ RAW TEXT TO PROCESS:
 `;
 }
 
+function generateHighlightedHandoutPrompt(reviewTopics = []) {
+  let reviewSection = '';
+  if (reviewTopics && reviewTopics.length > 0) {
+    const topicsList = reviewTopics.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    reviewSection = `
+EXAM REVIEW TOPICS (prioritize text related to these):
+${topicsList}
+`;
+  }
+
+  return `You are a precise academic text highlighter. You highlight handouts exactly like a top student would — selectively, sparingly, only what matters for exam revision.
+
+TASK: Return the EXACT same Markdown text. Your ONLY change: wrap key phrases in **bold** markers.
+
+WHAT TO HIGHLIGHT (only these, nothing else):
+1. Definitions — the core defining sentence only (e.g. "**Computer is an electronic device which takes some input, process it, and produce output**")
+2. Key technical terms — ONLY when first introduced, 2-6 words (e.g. "**virtual memory**", "**data processing**")
+3. Named concepts, theories, models, laws, formulas
+4. Critical specific facts: names, dates, numbers, percentages
+5. Important headings/subheadings — single heading words are OK to bold
+${reviewSection}
+STRICT LIMITS:
+- Maximum 1-2 highlighted phrases per paragraph (most paragraphs need 0-1)
+- Each highlight: 2-8 words (single words ONLY for headings or critical terms)
+- If a paragraph is just explanation/elaboration, highlight NOTHING
+- Aim for ~10-15% of text highlighted total, NOT more
+
+DO NOT HIGHLIGHT:
+- Common words: is, are, the, can, also, may, will, some, any, etc.
+- Connecting phrases: "according to", "in other words", "for example"
+- Entire sentences or full paragraphs
+- Repeated terms — bold only the FIRST occurrence
+- Examples, elaborations, analogies
+- Words like "input", "output", "data" when used casually (only bold when part of a definition or key concept)
+
+RULES:
+1. Do NOT change, add, remove, or rephrase any text
+2. Do NOT add notes, commentary, or explanations
+3. Keep ALL existing Markdown formatting exactly as-is
+4. Wrap response inside a Markdown code block
+
+OUTPUT:
+\`\`\`markdown
+[your highlighted text here]
+\`\`\`
+
+TEXT TO HIGHLIGHT:
+`;
+}
+
+function generateHandoutPrompt() {
+  return `You are an expert academic content writer and professor specializing in converting raw lecture transcripts into structured, publication-quality university handouts.
+
+CONTEXT: The following text is a raw transcript from a VU (Virtual University) lecture. It contains spoken language (potentially Urdu, English, or mixed Urdu+English). The speaking style is informal and conversational — your job is to transform it into formal, structured academic writing.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRANSFORMATION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. **RESTRUCTURE** from conversational lecture style into formal academic writing
+2. **ORGANIZE** into clear sections with proper headings and subheadings
+3. **EXTRACT** all key definitions, concepts, theories, formulas, and important points
+4. **REMOVE** all filler words, verbal pauses ("umm", "so basically", "you know"), repetitions, and conversational elements
+5. **TRANSLATE** any Urdu portions into clear English while keeping technical terms intact
+6. **PRESERVE** all technical terms, formulas, examples, numerical data, and important details — do NOT skip or simplify them
+7. **ADD** proper numbering, bullet points, and structured formatting where appropriate
+8. **EXPAND** brief mentions into complete explanations where the concept is important
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Structure your output as follows:
+- Use **## Main Topic** for major sections
+- Use **### Subtopic** for subsections
+- Use **bold** for key terms and definitions
+- Use bullet points for lists of concepts
+- Use numbered lists for sequential processes or steps
+- Include a **Key Concepts** summary at the end of each major section
+- Use > blockquotes for important definitions
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUALITY STANDARDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Write in formal academic English
+- Ensure complete sentences (no fragments from speech)
+- Maintain logical flow between sections
+- Include ALL important information from the transcript — do not skip content
+- Make it exam-revision friendly
+- Each heading should be descriptive and specific (not "Topic 1", but "Cellular Respiration Process")
+- Include practical examples where the lecture mentions them
+
+Respond with the structured handout text inside a markdown code block:
+\\\`\\\`\\\`markdown
+[Your structured handout here]
+\\\`\\\`\\\`
+
+LECTURE TRANSCRIPT:
+`;
+}
+
+// ============================================================
+// SUBJECT-AWARE PROMPT ADDENDUM
+// ============================================================
+
+
+function getSubjectAddendum(subjectPrefix, contentType) {
+  /**
+   * Returns a subject-specific addendum block to inject into the system prompt.
+   * Only activates for MTH/STA/PHY (math) and CS/IT/BIT (CS) subjects.
+   * Returns empty string for all other subjects (no change to existing behavior).
+   */
+  if (!subjectPrefix) return '';
+  const prefix = subjectPrefix.toUpperCase();
+
+  // ── Math Subjects (MTH, STA, PHY) ──
+  const MATH_PREFIXES = ['MTH', 'STA', 'PHY'];
+  if (MATH_PREFIXES.includes(prefix)) {
+    if (contentType === 'mcq') {
+      return `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ MATH/SCIENCE SUBJECT DETECTED — SPECIAL INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is a MATH/SCIENCE subject. You MUST follow these additional rules:
+
+1. FOCUS on expression-based, formula-based, and conceptual MCQs.
+2. Return ALL mathematical expressions in LaTeX format:
+   - Inline math: wrap in single dollar signs like $x^2 + y^2 = r^2$
+   - Block/display math: wrap in double dollar signs like $$\\int_0^1 x^2 dx = \\frac{1}{3}$$
+3. For questions involving formulas, derivations, or equations:
+   - Include the formula in the question text using LaTeX
+   - Options should also use LaTeX where expressions appear
+   - Explanation should show step-by-step working using LaTeX
+4. Explain each mathematical concept like a great professor:
+   - Break down every step of the derivation clearly
+   - Use real-world examples and analogies so students understand WHY, not just WHAT
+   - Connect abstract math concepts to practical, tangible scenarios
+5. NEVER return raw text for math expressions (e.g., "x^2" is WRONG, "$x^2$" is CORRECT)
+6. Cover: formulas, theorems, proofs, derivations, numerical problems, graph-based reasoning
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+    } else if (contentType === 'short_notes') {
+      return `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ MATH/SCIENCE SUBJECT DETECTED — SPECIAL INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is a MATH/SCIENCE subject. You MUST follow these additional rules:
+
+1. FOCUS on formula derivations, step-by-step expression breakdowns, and conceptual depth.
+2. Return ALL mathematical expressions in LaTeX format:
+   - Inline math: $expression$ (e.g., $f(x) = ax^2 + bx + c$)
+   - Block math: $$expression$$ (e.g., $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$)
+3. For each short note:
+   - The "question" should ask about a specific formula, theorem, or mathematical concept
+   - The "answer" should explain step-by-step with full LaTeX expressions
+   - Include real-world examples that connect the math to practical scenarios
+   - Teach like a great professor: every step clearly explained with reasoning
+4. Cover: important formulas, theorem statements + proofs, derivation steps, key identities
+5. NEVER use plain text for math — always use LaTeX notation
+6. Make students UNDERSTAND the concept, not just memorize the formula
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+    }
+  }
+
+  // ── CS Subjects (CS, IT, BIT) ──
+  const CS_PREFIXES = ['CS', 'IT', 'BIT'];
+  if (CS_PREFIXES.includes(prefix)) {
+    if (contentType === 'mcq') {
+      return `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ COMPUTER SCIENCE SUBJECT DETECTED — SPECIAL INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is a COMPUTER SCIENCE subject. You MUST follow these additional rules:
+
+1. FOCUS on conceptual MCQs, including code-based questions wherever relevant.
+2. When the topic involves programming, algorithms, or data structures:
+   - Include code-based MCQs that test understanding of code output, behavior, or debugging
+   - Wrap ALL code snippets in triple backtick blocks with the language tag, e.g.:
+     \`\`\`python
+     def example():
+         return 42
+     \`\`\`
+   - Or for C/C++: \`\`\`cpp
+   - Or for Java: \`\`\`java
+3. For code-related questions:
+   - Ask "What is the output of this code?"
+   - Ask "What error exists in this code?"
+   - Ask about time/space complexity
+   - Ask about conceptual understanding (e.g., "Which data structure is best for...")
+4. For non-code CS topics (networking, OS, databases, etc.):
+   - Focus on deep conceptual understanding
+   - Explain like a professor: step-by-step with clear reasoning
+5. Code in options should also be in backtick format where applicable
+6. Explanations should be detailed, walking through the logic step by step
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+    } else if (contentType === 'short_notes') {
+      return `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ COMPUTER SCIENCE SUBJECT DETECTED — SPECIAL INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is a COMPUTER SCIENCE subject. You MUST follow these additional rules:
+
+1. Include IMPORTANT and CONCEPTUAL coding questions wherever the topic involves programming.
+2. For coding-related topics:
+   - Include code examples in the "answer" field wrapped in triple backtick blocks with language tag:
+     \`\`\`python
+     # Example code here
+     \`\`\`
+   - Explain the code line by line — what each part does and why
+   - Include practical examples that demonstrate the concept
+3. For every concept:
+   - Explain step-by-step like a great professor
+   - Use analogies and real-world examples for clarity
+   - Make the student UNDERSTAND the WHY behind each concept
+4. For non-code topics (networking, OS, databases):
+   - Give deep conceptual explanations
+   - Include relevant technical examples
+5. Every answer should be detailed enough for a student to fully grasp the concept
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+    }
+  }
+
+  return '';
+}
+
 // ============================================================
 // BROWSER INITIALIZATION
 // ============================================================
@@ -437,9 +666,10 @@ app.post('/api/send-prompt', async (req, res) => {
   const requestId = Date.now();
 
   try {
-    const { text, section, expected_mcqs, content_type, review_topics } = req.body;
+    const { text, section, expected_mcqs, content_type, review_topics, subject_prefix } = req.body;
     const expectedMcqs = expected_mcqs || 10;
     const reviews = Array.isArray(review_topics) ? review_topics : [];
+    const subjectPfx = subject_prefix || '';
 
     if (!text) {
       return res.status(400).json({ success: false, error: 'Text is required' });
@@ -483,8 +713,19 @@ app.post('/api/send-prompt', async (req, res) => {
       systemPrompt = generateReviewStructuringPrompt();
     } else if (ct === 'short_notes') {
       systemPrompt = generateShortNotesPrompt(expectedMcqs, reviews);
+    } else if (ct === 'highlighted_handout') {
+      systemPrompt = generateHighlightedHandoutPrompt(reviews);
+    } else if (ct === 'lecture_handout') {
+      systemPrompt = generateHandoutPrompt();
     } else {
       systemPrompt = generateSystemPrompt(expectedMcqs, reviews);
+    }
+
+    // Inject subject-specific addendum (only for MTH/CS subjects, empty for others)
+    const addendum = getSubjectAddendum(subjectPfx, ct);
+    if (addendum) {
+      systemPrompt += '\n' + addendum;
+      console.log(`[${requestId}] Subject addendum injected for: ${subjectPfx} (${ct})`);
     }
 
     const fullPrompt = systemPrompt + '\n\n' + text;
@@ -492,6 +733,7 @@ app.post('/api/send-prompt', async (req, res) => {
     console.log(`\n${'='.repeat(60)}`);
     console.log(`[${requestId}] Sending prompt to Gemini`);
     console.log(`[${requestId}] Section: ${section || 'unknown'}, Type: ${ct}, Expected: ${expectedMcqs}`);
+    console.log(`[${requestId}] Subject prefix: ${subjectPfx || 'none'}`);
     console.log(`[${requestId}] Text: ${text.length} chars, Prompt: ${fullPrompt.length} chars`);
     console.log(`[${requestId}] Review topics embedded: ${reviews.length}`);
     console.log(`[${requestId}] Premium today: ${counter.count}/100`);

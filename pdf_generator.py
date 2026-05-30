@@ -24,6 +24,26 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 from pdf_settings import PDFSettingsManager
 
+# Subject-aware renderers (Pillar 2 & 3)
+try:
+    from latex_renderer import (
+        is_math_subject, parse_and_render_mixed_content as latex_render,
+        cleanup_temp_files as latex_cleanup
+    )
+    _HAS_LATEX_RENDERER = True
+except ImportError:
+    _HAS_LATEX_RENDERER = False
+    print("[PDFGen] LaTeX renderer not available — math content will render as plain text")
+
+try:
+    from code_renderer import (
+        is_cs_subject, render_mixed_content_with_code as code_render
+    )
+    _HAS_CODE_RENDERER = True
+except ImportError:
+    _HAS_CODE_RENDERER = False
+    print("[PDFGen] Code renderer not available — code content will render as plain text")
+
 # Register custom fonts
 try:
     _font_dir = os.path.join(os.path.dirname(__file__), 'assets', 'fonts')
@@ -660,6 +680,69 @@ def _get_layout(doc_type="mcq"):
     return settings.get('layout', {})
 
 
+def _detect_subject_prefix(json_path: str) -> str:
+    """
+    Detect the subject prefix (e.g., 'MTH', 'CS', 'MGT') from a JSON filename.
+    Searches anywhere in the filename to handle patterns like:
+      'short note MTH501_test_mids.json' → 'MTH'
+      'CS301_test_mids_mcqs.json' → 'CS'
+    """
+    import re
+    stem = Path(json_path).stem.upper()
+    # Search anywhere in the filename (not just the start)
+    match = re.search(r'([A-Z]+)\d+', stem)
+    if match:
+        return match.group(1)
+    return ''
+
+
+def _render_content(text: str, style, subject_prefix: str = '',
+                    font_size: int = 10, available_width: float = 450,
+                    prefix_text: str = '') -> list:
+    """
+    Unified content renderer that routes through the appropriate renderer
+    based on subject type.
+    
+    Args:
+        text: Raw text content (may contain LaTeX or code blocks)
+        style: ReportLab ParagraphStyle for plain text rendering
+        subject_prefix: Subject prefix (e.g., 'MTH', 'CS')
+        font_size: Font size for LaTeX rendering
+        available_width: Available width in points
+        prefix_text: Optional prefix (e.g., 'Q1. ') to prepend to first flowable
+    
+    Returns:
+        List of ReportLab flowables
+    """
+    if not text:
+        return [Paragraph(_escape(text or ''), style)]
+    
+    # Route 1: Math subjects → LaTeX renderer
+    if _HAS_LATEX_RENDERER and is_math_subject(subject_prefix) and '$' in text:
+        flowables = latex_render(text, style, font_size=font_size,
+                                 available_width=available_width,
+                                 prefix_text=prefix_text)
+        return flowables
+    
+    # Route 2: CS subjects → Code renderer
+    if _HAS_CODE_RENDERER and is_cs_subject(subject_prefix) and ('```' in text or '`' in text):
+        flowables = code_render(text, style, available_width=available_width)
+        # Prepend prefix to first text flowable if needed
+        if prefix_text and flowables:
+            first = flowables[0]
+            if isinstance(first, Paragraph):
+                original_text = first._text if hasattr(first, '_text') else _escape(text)
+                flowables[0] = Paragraph(
+                    f"{_escape(prefix_text)}{original_text}",
+                    style
+                )
+        return flowables
+    
+    # Route 3: Default → plain text (existing behavior)
+    full_text = f"{_escape(prefix_text)}{_escape(text)}" if prefix_text else _escape(text)
+    return [Paragraph(full_text, style)]
+
+
 def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None) -> str:
     with open(json_path, 'r', encoding='utf-8') as f:
         mcqs = json.load(f)
@@ -680,6 +763,15 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
     lay = _get_layout("mcq")
     editor = _load_editor_settings()
     promo = PromoPageManager("mcq")
+    
+    # Detect subject for content-aware rendering
+    subject_prefix = _detect_subject_prefix(json_path)
+    is_special_subject = (
+        (_HAS_LATEX_RENDERER and is_math_subject(subject_prefix)) or
+        (_HAS_CODE_RENDERER and is_cs_subject(subject_prefix))
+    )
+    if is_special_subject:
+        print(f"[PDFGen] Subject-aware rendering active for: {subject_prefix}")
 
     doc = SimpleDocTemplate(
         output_path,
@@ -734,6 +826,9 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
     exp_width_pct = lay.get('explanation_width_percent', 35) / 100.0
     q_spacing = int(lay.get('question_spacing', 6))
 
+    # Available width for content rendering
+    content_width = A4[0] - int(lay.get('margin_left', 20)) * mm - int(lay.get('margin_right', 20)) * mm
+
     for mcq in mcqs:
         q_id = mcq.get('id', '?')
         question = mcq.get('question', 'No question text')
@@ -744,7 +839,16 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
         imp = mcq.get('importance', '')
 
         block = []
-        block.append(Paragraph(f"Q{q_id}. {_escape(question)}", styles['Question']))
+        
+        # Render question — subject-aware
+        q_flowables = _render_content(
+            question, styles['Question'],
+            subject_prefix=subject_prefix,
+            font_size=int(lay.get('question_size', 10)),
+            available_width=content_width,
+            prefix_text=f"Q{q_id}. "
+        )
+        block.extend(q_flowables)
 
         # Options
         correct_idx = -1
@@ -757,8 +861,19 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
         opt_data = []
         for i, opt in enumerate(options):
             label = option_labels[i] if i < len(option_labels) else str(i + 1)
-            p = Paragraph(f"{label}. {_escape(str(opt))}", styles['Option'])
-            opt_data.append([p])
+            # Render option — subject-aware
+            opt_flowables_list = _render_content(
+                str(opt), styles['Option'],
+                subject_prefix=subject_prefix,
+                font_size=int(lay.get('option_size', 9.5)),
+                available_width=content_width * 0.6,
+                prefix_text=f"{label}. "
+            )
+            # For table cell, wrap multiple flowables in a list
+            if len(opt_flowables_list) == 1:
+                opt_data.append([opt_flowables_list[0]])
+            else:
+                opt_data.append([opt_flowables_list])
 
         opt_flowables = []
         if opt_data:
@@ -781,11 +896,17 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
         if lay.get('show_importance') and imp:
             opt_flowables.append(Paragraph(f"Importance: {imp}", styles['MetaText']))
 
-        # Explanation box
+        # Explanation box — subject-aware rendering
         exp_flowables = []
         if explanation:
             exp_flowables.append(Paragraph("Explanation:", styles['ExplanationLabel']))
-            exp_flowables.append(Paragraph(_escape(explanation), styles['Explanation']))
+            exp_content_flowables = _render_content(
+                explanation, styles['Explanation'],
+                subject_prefix=subject_prefix,
+                font_size=int(lay.get('explanation_size', 9)),
+                available_width=content_width * exp_width_pct * 0.85
+            )
+            exp_flowables.extend(exp_content_flowables)
 
             exp_table = Table([[exp_flowables]], colWidths=['100%'])
             exp_table.setStyle(TableStyle([
@@ -873,6 +994,11 @@ def generate_mcq_pdf(json_path: str, output_path: str = None, title: str = None)
         _append_last_page(output_path, promo, "mcq", lay)
 
     print(f"✓ MCQ PDF generated: {output_path}")
+    
+    # Cleanup LaTeX temp files if used
+    if _HAS_LATEX_RENDERER and is_math_subject(subject_prefix):
+        latex_cleanup()
+    
     return output_path
 
 
@@ -967,6 +1093,15 @@ def generate_short_notes_pdf(json_path: str, output_path: str = None, title: str
 
     lay = _get_layout("notes")
     promo = PromoPageManager("notes")
+    
+    # Detect subject for content-aware rendering
+    subject_prefix = _detect_subject_prefix(json_path)
+    is_special_subject = (
+        (_HAS_LATEX_RENDERER and is_math_subject(subject_prefix)) or
+        (_HAS_CODE_RENDERER and is_cs_subject(subject_prefix))
+    )
+    if is_special_subject:
+        print(f"[PDFGen] Subject-aware rendering active for notes: {subject_prefix}")
 
     doc = SimpleDocTemplate(
         output_path,
@@ -997,6 +1132,7 @@ def generate_short_notes_pdf(json_path: str, output_path: str = None, title: str
     story.append(Spacer(1, 6*mm))
 
     q_spacing = int(lay.get('question_spacing', 4))
+    content_width = A4[0] - int(lay.get('margin_left', 20)) * mm - int(lay.get('margin_right', 20)) * mm
 
     for i, note in enumerate(notes, 1):
         q_id = note.get('id', i)
@@ -1004,9 +1140,35 @@ def generate_short_notes_pdf(json_path: str, output_path: str = None, title: str
         answer = note.get('answer', 'No answer')
 
         block = []
-        block.append(Paragraph(f"Q{q_id}. {_escape(question)}", styles['Question']))
-        ans_text = f"<b>Answer:</b> {_escape(answer)}"
-        block.append(Paragraph(ans_text, styles['NoteAnswer']))
+        
+        # Render question — subject-aware
+        q_flowables = _render_content(
+            question, styles['Question'],
+            subject_prefix=subject_prefix,
+            font_size=int(lay.get('question_size', 10)),
+            available_width=content_width,
+            prefix_text=f"Q{q_id}. "
+        )
+        block.extend(q_flowables)
+        
+        # Render answer — subject-aware
+        ans_flowables = _render_content(
+            answer, styles['NoteAnswer'],
+            subject_prefix=subject_prefix,
+            font_size=int(lay.get('option_size', 9.5)),
+            available_width=content_width,
+            prefix_text="Answer: "
+        )
+        # For the first flowable that's a Paragraph, make "Answer:" bold
+        if ans_flowables and isinstance(ans_flowables[0], Paragraph):
+            raw_text = ans_flowables[0]._text if hasattr(ans_flowables[0], '_text') else ''
+            if raw_text.startswith('Answer:'):
+                ans_flowables[0] = Paragraph(
+                    f"<b>Answer:</b> {raw_text[7:]}",
+                    styles['NoteAnswer']
+                )
+        block.extend(ans_flowables)
+        
         story.append(KeepTogether(block))
         story.append(Spacer(1, q_spacing * mm))
 
@@ -1028,6 +1190,11 @@ def generate_short_notes_pdf(json_path: str, output_path: str = None, title: str
         _append_last_page(output_path, promo, "notes", lay)
 
     print(f"✓ Notes PDF generated: {output_path}")
+    
+    # Cleanup LaTeX temp files if used
+    if _HAS_LATEX_RENDERER and is_math_subject(subject_prefix):
+        latex_cleanup()
+    
     return output_path
 
 
@@ -1099,6 +1266,8 @@ def scan_json_files(root_path: str) -> List[Dict[str, str]]:
     for json_file in root.rglob('*.json'):
         name = json_file.stem
         if json_file.name.lower().startswith('reviews'):
+            continue
+        if json_file.name.lower() == 'markdown_conversion_status.json':
             continue
         if 'short note' in name.lower() or 'short_note' in name.lower():
             content_type = 'Short Notes'

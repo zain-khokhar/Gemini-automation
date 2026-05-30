@@ -265,13 +265,18 @@ def build_index_map(pdf_paths: list) -> dict:
 
 def get_processed_pdf_status(pdf_name: str) -> dict:
     """
-    Check the processing status of a PDF by looking for existing output JSON files.
+    Check the processing status of a PDF by looking for existing output JSON files
+    and highlighted handout PDFs.
     
     Checks the organized JSON output folder for:
     - Mids MCQs file
     - Finals MCQs file
     - Mids Short Notes file
     - Finals Short Notes file
+    
+    Also checks the PDF output root for:
+    - Mids Highlighted Handout PDF
+    - Finals Highlighted Handout PDF
     
     Args:
         pdf_name: PDF name without extension (e.g., 'CS101 handouts_1')
@@ -285,6 +290,8 @@ def get_processed_pdf_status(pdf_name: str) -> dict:
             'finals_notes': int (count or 0),
             'mids_processed': bool,
             'finals_processed': bool,
+            'mids_highlighted': bool,
+            'finals_highlighted': bool,
         }
     """
     import json as _json
@@ -296,73 +303,85 @@ def get_processed_pdf_status(pdf_name: str) -> dict:
         'finals_notes': 0,
         'mids_processed': False,
         'finals_processed': False,
+        'mids_highlighted': False,
+        'finals_highlighted': False,
     }
     
     subject_code = extract_subject_code(pdf_name)
+    full_subject = extract_full_subject_code(pdf_name)
     base_dir = Path(get_json_output_root())
     
     if subject_code:
         pdf_folder = base_dir / subject_code / pdf_name
     else:
         # Fallback — can't determine path without full source path
-        return result
+        pdf_folder = None
     
-    if not pdf_folder.exists():
-        return result
-    
-    # Check mids
-    mids_folder = pdf_folder / "mids"
-    if mids_folder.exists():
-        # MCQs
-        mcq_file = mids_folder / f"{pdf_name}_mids_mcqs.json"
-        if mcq_file.exists():
-            try:
-                with open(mcq_file, 'r', encoding='utf-8') as f:
-                    data = _json.load(f)
-                if isinstance(data, list):
-                    result['mids_mcqs'] = len(data)
-                    result['mids_processed'] = True
-            except Exception:
-                pass
+    if pdf_folder and pdf_folder.exists():
+        # Check mids
+        mids_folder = pdf_folder / "mids"
+        if mids_folder.exists():
+            # MCQs
+            mcq_file = mids_folder / f"{pdf_name}_mids_mcqs.json"
+            if mcq_file.exists():
+                try:
+                    with open(mcq_file, 'r', encoding='utf-8') as f:
+                        data = _json.load(f)
+                    if isinstance(data, list):
+                        result['mids_mcqs'] = len(data)
+                        result['mids_processed'] = True
+                except Exception:
+                    pass
+            
+            # Short Notes
+            notes_file = mids_folder / f"short note {pdf_name}_mids.json"
+            if notes_file.exists():
+                try:
+                    with open(notes_file, 'r', encoding='utf-8') as f:
+                        data = _json.load(f)
+                    if isinstance(data, list):
+                        result['mids_notes'] = len(data)
+                        result['mids_processed'] = True
+                except Exception:
+                    pass
         
-        # Short Notes
-        notes_file = mids_folder / f"short note {pdf_name}_mids.json"
-        if notes_file.exists():
-            try:
-                with open(notes_file, 'r', encoding='utf-8') as f:
-                    data = _json.load(f)
-                if isinstance(data, list):
-                    result['mids_notes'] = len(data)
-                    result['mids_processed'] = True
-            except Exception:
-                pass
+        # Check finals
+        finals_folder = pdf_folder / "finals"
+        if finals_folder.exists():
+            # MCQs
+            mcq_file = finals_folder / f"{pdf_name}_finals_mcqs.json"
+            if mcq_file.exists():
+                try:
+                    with open(mcq_file, 'r', encoding='utf-8') as f:
+                        data = _json.load(f)
+                    if isinstance(data, list):
+                        result['finals_mcqs'] = len(data)
+                        result['finals_processed'] = True
+                except Exception:
+                    pass
+            
+            # Short Notes
+            notes_file = finals_folder / f"short note {pdf_name}_finals.json"
+            if notes_file.exists():
+                try:
+                    with open(notes_file, 'r', encoding='utf-8') as f:
+                        data = _json.load(f)
+                    if isinstance(data, list):
+                        result['finals_notes'] = len(data)
+                        result['finals_processed'] = True
+                except Exception:
+                    pass
     
-    # Check finals
-    finals_folder = pdf_folder / "finals"
-    if finals_folder.exists():
-        # MCQs
-        mcq_file = finals_folder / f"{pdf_name}_finals_mcqs.json"
-        if mcq_file.exists():
-            try:
-                with open(mcq_file, 'r', encoding='utf-8') as f:
-                    data = _json.load(f)
-                if isinstance(data, list):
-                    result['finals_mcqs'] = len(data)
-                    result['finals_processed'] = True
-            except Exception:
-                pass
-        
-        # Short Notes
-        notes_file = finals_folder / f"short note {pdf_name}_finals.json"
-        if notes_file.exists():
-            try:
-                with open(notes_file, 'r', encoding='utf-8') as f:
-                    data = _json.load(f)
-                if isinstance(data, list):
-                    result['finals_notes'] = len(data)
-                    result['finals_processed'] = True
-            except Exception:
-                pass
+    # Check for highlighted handout PDFs in pdf_output_root
+    if full_subject and full_subject != 'MISC':
+        pdf_out = Path(get_pdf_output_root())
+        if pdf_out.exists():
+            mids_hl = pdf_out / f"{full_subject}_Mids_Highlighted-Handout_BY_VUEDU.pdf"
+            finals_hl = pdf_out / f"{full_subject}_Finals_Highlighted-Handout_BY_VUEDU.pdf"
+            if mids_hl.exists():
+                result['mids_highlighted'] = True
+            if finals_hl.exists():
+                result['finals_highlighted'] = True
     
     return result
 
@@ -370,6 +389,7 @@ def get_processed_pdf_status(pdf_name: str) -> dict:
 def scan_all_processed_pdfs() -> list:
     """
     Scan the JSON output root for all processed PDFs.
+    Also scans the PDF output root for highlighted handout PDFs.
     
     Returns:
         List of dicts:
@@ -384,6 +404,8 @@ def scan_all_processed_pdfs() -> list:
                 'finals_notes': int,
                 'mids_processed': bool,
                 'finals_processed': bool,
+                'mids_highlighted': bool,
+                'finals_highlighted': bool,
             }
         ]
     """
@@ -391,39 +413,83 @@ def scan_all_processed_pdfs() -> list:
     
     base_dir = Path(get_json_output_root())
     results = []
+    seen_subjects = set()  # Track subject codes we've already processed
     
-    if not base_dir.exists():
-        return results
-    
-    for subject_dir in sorted(base_dir.iterdir()):
-        if not subject_dir.is_dir():
-            continue
-        
-        subject_code = subject_dir.name
-        
-        # Skip reviews-only folders and non-subject folders
-        if subject_code.startswith('.') or subject_code.startswith('_'):
-            continue
-        
-        for pdf_folder in sorted(subject_dir.iterdir()):
-            if not pdf_folder.is_dir():
+    if base_dir.exists():
+        for subject_dir in sorted(base_dir.iterdir()):
+            if not subject_dir.is_dir():
                 continue
             
-            pdf_name = pdf_folder.name
+            subject_code = subject_dir.name
             
-            # Skip if it's a reviews file
-            if pdf_name.startswith('reviews'):
+            # Skip reviews-only folders and non-subject folders
+            if subject_code.startswith('.') or subject_code.startswith('_'):
                 continue
             
-            status = get_processed_pdf_status(pdf_name)
-            
-            # Only include if actually processed
-            if status['mids_processed'] or status['finals_processed']:
-                results.append({
-                    'pdf_name': pdf_name,
-                    'subject_code': subject_code,
-                    'index_code': '',  # Will be assigned by caller if needed
-                    **status
-                })
+            for pdf_folder in sorted(subject_dir.iterdir()):
+                if not pdf_folder.is_dir():
+                    continue
+                
+                pdf_name = pdf_folder.name
+                
+                # Skip if it's a reviews file
+                if pdf_name.startswith('reviews'):
+                    continue
+                
+                status = get_processed_pdf_status(pdf_name)
+                
+                # Only include if actually processed (MCQs, Notes, or Highlighted)
+                if status['mids_processed'] or status['finals_processed'] or \
+                   status.get('mids_highlighted') or status.get('finals_highlighted'):
+                    results.append({
+                        'pdf_name': pdf_name,
+                        'subject_code': subject_code,
+                        'index_code': '',  # Will be assigned by caller if needed
+                        **status
+                    })
+                    full_subj = extract_full_subject_code(pdf_name)
+                    if full_subj != 'MISC':
+                        seen_subjects.add(full_subj)
+    
+    # Also scan PDF output root for highlighted handouts that might not have JSON output
+    pdf_out = Path(get_pdf_output_root())
+    if pdf_out.exists():
+        import re as _re
+        for pdf_file in sorted(pdf_out.glob('*_Highlighted-Handout_BY_VUEDU.pdf')):
+            # Extract subject code from filename like CS302_Mids_Highlighted-Handout_BY_VUEDU.pdf
+            match = _re.match(r'^([A-Z]+\d+)_(Mids|Finals)_Highlighted-Handout_BY_VUEDU\.pdf$', 
+                             pdf_file.name, _re.IGNORECASE)
+            if match:
+                full_subj = match.group(1).upper()
+                if full_subj not in seen_subjects:
+                    # This highlighted PDF doesn't have a corresponding JSON entry
+                    # Create a minimal entry for it
+                    subj_prefix = _re.match(r'^([A-Z]+)', full_subj)
+                    subj_code = subj_prefix.group(1) if subj_prefix else 'MISC'
+                    
+                    # Check if we already have an entry for this subject
+                    existing = [r for r in results if extract_full_subject_code(r['pdf_name']) == full_subj]
+                    if not existing:
+                        status = {
+                            'mids_mcqs': 0, 'finals_mcqs': 0,
+                            'mids_notes': 0, 'finals_notes': 0,
+                            'mids_processed': False, 'finals_processed': False,
+                            'mids_highlighted': False, 'finals_highlighted': False,
+                        }
+                        # Check both mids and finals highlights
+                        mids_path = pdf_out / f"{full_subj}_Mids_Highlighted-Handout_BY_VUEDU.pdf"
+                        finals_path = pdf_out / f"{full_subj}_Finals_Highlighted-Handout_BY_VUEDU.pdf"
+                        if mids_path.exists():
+                            status['mids_highlighted'] = True
+                        if finals_path.exists():
+                            status['finals_highlighted'] = True
+                        
+                        results.append({
+                            'pdf_name': f"{full_subj}_handouts",
+                            'subject_code': subj_code,
+                            'index_code': '',
+                            **status
+                        })
+                        seen_subjects.add(full_subj)
     
     return results

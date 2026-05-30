@@ -18,6 +18,9 @@ import threading
 import time
 import os
 
+class SkipPDFException(Exception):
+    pass
+
 
 class ProcessingThread(QThread):
     """Single PDF processor (kept for backward compatibility)"""
@@ -100,6 +103,7 @@ class BatchProcessingThread(QThread):
         # Manual input synchronization
         self._input_event = threading.Event()
         self._skip_event = threading.Event()
+        self._skip_pdf_event = threading.Event()
         self._repeat_event = threading.Event()
         self._input_json = None  # Stores the JSON text submitted by user
         self._input_source = None  # 'extract' or 'manual'
@@ -108,6 +112,11 @@ class BatchProcessingThread(QThread):
         """Skip the current batch when stuck on invalid JSON"""
         self._skip_event.set()
         self._input_event.set()  # Unblock wait
+
+    def skip_current_pdf(self):
+        """Skip the entire current PDF."""
+        self._skip_pdf_event.set()
+        self._input_event.set()
 
     def repeat_current_batch(self):
         """Repeat the current batch by re-sending the same prompt to Gemini"""
@@ -163,6 +172,7 @@ class BatchProcessingThread(QThread):
         """
         self._input_event.clear()
         self._skip_event.clear()
+        self._skip_pdf_event.clear()
         self._repeat_event.clear()
         self._input_json = None
         self._input_source = None
@@ -179,6 +189,8 @@ class BatchProcessingThread(QThread):
         
         if self.should_stop:
             return None
+        if self._skip_pdf_event.is_set():
+            return '__SKIP_PDF__'
         if self._skip_event.is_set():
             return None
         if self._repeat_event.is_set():
@@ -206,8 +218,9 @@ class BatchProcessingThread(QThread):
                 raise Exception("Gemini server is not running or not initialized")
             
             for idx, pdf_path in enumerate(self.pdf_paths, 1):
+                self._skip_pdf_event.clear()
                 if self.should_stop:
-                    self.log_signal.emit("❌ Stopped by user", "error")
+                    self.log_signal.emit("⏹ Stopped by user", "error")
                     break
                 
                 # Skip PDFs before start index
@@ -218,6 +231,7 @@ class BatchProcessingThread(QThread):
                 pdf_name = os.path.basename(pdf_path)
                 self.current_pdf_signal.emit(pdf_name, idx, total_pdfs)
                 
+
                 self.log_signal.emit("", "info")
                 self.log_signal.emit("=" * 60, "info")
                 self.log_signal.emit(f"📄 PDF {idx}/{total_pdfs}: {pdf_name}", "info")
@@ -249,6 +263,10 @@ class BatchProcessingThread(QThread):
                         
                         json_manager = JSONManager(pdf_basename, output_dir, pdf_source_path=pdf_path, content_type=content_type)
                         self.current_json_manager = json_manager
+                        
+                        # Extract subject prefix for subject-aware prompt injection
+                        from folder_organizer import extract_subject_code
+                        subject_prefix = extract_subject_code(pdf_basename) or ''
                         
                         for section in self.selected_sections:
                             if self.should_stop:
@@ -285,6 +303,8 @@ class BatchProcessingThread(QThread):
                                 
                                 # Emit position
                                 self.position_signal.emit(pdf_path, idx, pdf_name, section, batch_idx)
+                                
+
                                 
                                 self.log_signal.emit("", "info")
                                 self.log_signal.emit(f"📦 Batch {batch_idx}/{len(batches)} (Pages {batch['start_page']}-{batch['end_page']}, {batch['page_count']} pages)", "info")
@@ -333,6 +353,10 @@ class BatchProcessingThread(QThread):
 
                                     self.log_signal.emit("   📤 Sending to Gemini...", "info")
                                     
+                                    # Check if PDF was skipped
+                                    if self._skip_pdf_event.is_set():
+                                        raise SkipPDFException()
+
                                     # Store current batch data for repeat
                                     self._current_batch_text = prompt_text
                                     self._current_batch_section = section
@@ -344,7 +368,8 @@ class BatchProcessingThread(QThread):
                                         section=section,
                                         pages_count=batch['page_count'],
                                         content_type=content_type,
-                                        review_topics=review_topics_list
+                                        review_topics=review_topics_list,
+                                        subject_prefix=subject_prefix
                                     )
                                     self.log_signal.emit("   ✓ Prompt sent — waiting for your input", "success")
                                     
@@ -364,6 +389,10 @@ class BatchProcessingThread(QThread):
                                             break
                                         
                                         # Handle repeat request
+                                        if raw_json == '__SKIP_PDF__':
+                                            self.log_signal.emit("⚠️ Skipping entire PDF as requested.", "warning")
+                                            raise SkipPDFException()
+
                                         if raw_json == '__REPEAT__':
                                             self.log_signal.emit("   🔄 Repeating batch — re-sending prompt...", "info")
                                             if self._current_batch_text:
@@ -373,7 +402,8 @@ class BatchProcessingThread(QThread):
                                                         section=self._current_batch_section or section,
                                                         pages_count=batch['page_count'],
                                                         content_type=self._current_batch_content_type or content_type,
-                                                        review_topics=self._current_batch_review_topics
+                                                        review_topics=self._current_batch_review_topics,
+                                                        subject_prefix=subject_prefix
                                                     )
                                                     self.log_signal.emit("   ✓ Prompt re-sent — waiting for your input", "success")
                                                 except Exception as e:
@@ -433,10 +463,16 @@ class BatchProcessingThread(QThread):
                     successful += 1
                     self.log_signal.emit(f"✅ PDF {idx}/{total_pdfs} complete", "success")
                     
+
+                except SkipPDFException:
+                    self.log_signal.emit(f"⚠️ PDF {idx}/{total_pdfs} skipped by user", "warning")
+                    
                 except Exception as e:
                     failed += 1
                     failed_pdfs.append(pdf_name)
                     self.log_signal.emit(f"❌ PDF {idx}/{total_pdfs} failed: {str(e)}", "error")
+                    
+
             
             # Summary
             self.log_signal.emit("", "info")

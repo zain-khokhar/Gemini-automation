@@ -1,6 +1,7 @@
 {
     "gemini_server_url": "http://localhost:3000",
-    "pages_per_batch": 14,
+    "ffmpeg_path": "C:/Users/zaink/Downloads/ffmpeg-8.1.1-essentials_build/bin",
+    "pages_per_batch": 15,
     "mids_percentage": 95,
     "mcqs_per_batch": 10,
     "request_timeout_seconds": 200,
@@ -14,5 +15,10 @@
     "reviews_for_notes": true,
     "selected_section": "mids",
     "content_mcq": true,
-    "content_notes": true
+    "content_notes": true,
+    "content_highlighted": false,
+    "reviews_for_highlights": false,
+    "highlight_pages_per_batch": 15,
+    "highlight_chars_per_page": 400,
+    "highlight_batch_char_limit": 40000
 }

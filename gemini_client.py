@@ -38,7 +38,7 @@ class GeminiClient:
     
     def send_prompt(self, text: str, section: str = 'unknown',
                     pages_count: int = 5, content_type: str = 'mcq',
-                    review_topics: list = None) -> dict:
+                    review_topics: list = None, subject_prefix: str = '') -> dict:
         """
         Send prompt to Gemini via the server. Returns immediately after sending.
         Does NOT wait for Gemini to generate the response.
@@ -51,6 +51,8 @@ class GeminiClient:
             review_topics: List of review topic strings to embed in system prompt.
                           These get injected directly into the system prompt so the
                           model MUST read and use them. Pass None or [] if no reviews.
+            subject_prefix: Subject prefix (e.g., 'MTH', 'CS', 'MGT') for
+                           subject-aware prompt injection. Empty string for default.
         
         Returns:
             Server response dict with success status
@@ -62,7 +64,7 @@ class GeminiClient:
         content_label = "MCQs" if content_type == 'mcq' else "Short Notes"
         
         review_count = len(review_topics) if review_topics else 0
-        print(f"  → Sending prompt to Gemini ({pages_count} pages, {expected_mcqs} {content_label}, {review_count} review topics)...")
+        print(f"  → Sending prompt to Gemini ({pages_count} pages, {expected_mcqs} {content_label}, {review_count} review topics, subject={subject_prefix or 'generic'})...")
         
         try:
             payload = {
@@ -75,6 +77,10 @@ class GeminiClient:
             # Only include reviews if we have them
             if review_topics and len(review_topics) > 0:
                 payload['review_topics'] = review_topics
+            
+            # Include subject prefix for subject-aware prompt injection
+            if subject_prefix:
+                payload['subject_prefix'] = subject_prefix
             
             response = self.session.post(
                 f"{self.server_url}/api/send-prompt",
@@ -98,7 +104,8 @@ class GeminiClient:
                 raise Exception(f"Send failed: {data.get('error', 'Unknown error')}")
             
             reviews_msg = f", {review_count} reviews embedded" if review_count > 0 else ""
-            print(f"  ✓ Prompt sent successfully ({data.get('promptLength', '?')} chars{reviews_msg})")
+            subject_msg = f", subject={subject_prefix}" if subject_prefix else ""
+            print(f"  ✓ Prompt sent successfully ({data.get('promptLength', '?')} chars{reviews_msg}{subject_msg})")
             return data
             
         except requests.exceptions.Timeout:

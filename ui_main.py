@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import QColorDialog
 from pdf_settings import PDFSettingsManager
 from pdf_editor import EditPDFTab
 
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTextEdit, QFileDialog,
@@ -600,19 +601,50 @@ class ProcessingTab(QWidget):
         self.mcq_check = QCheckBox("MCQs")
         self.mcq_check.setChecked(True)
         self.notes_check = QCheckBox("Short Notes")
+        self.highlight_check = QCheckBox("Highlighted Handouts")
+        self.highlight_check.setToolTip("Generate highlighted handout PDFs with important text marked in yellow")
         content_layout.addWidget(self.mcq_check)
         content_layout.addWidget(self.notes_check)
+        content_layout.addWidget(self.highlight_check)
         content_layout.addWidget(divider())
         content_layout.addWidget(label_secondary("Reviews Context"))
         self.mcq_reviews_check = QCheckBox("Use reviews for MCQs")
         self.notes_reviews_check = QCheckBox("Use reviews for Notes")
+        self.highlight_reviews_check = QCheckBox("Use reviews for Highlighting")
         # Feature 3: Default both review checkboxes to enabled
         self.mcq_reviews_check.setChecked(True)
         self.notes_reviews_check.setChecked(True)
+        self.highlight_reviews_check.setChecked(True)
         self.mcq_reviews_check.setToolTip("Include student reviews in MCQ generation prompts for better relevance")
         self.notes_reviews_check.setToolTip("Include student reviews in Short Notes generation prompts for better relevance")
+        self.highlight_reviews_check.setToolTip("Include student reviews in Highlighted Handout prompts for better relevance")
         content_layout.addWidget(self.mcq_reviews_check)
         content_layout.addWidget(self.notes_reviews_check)
+        content_layout.addWidget(self.highlight_reviews_check)
+        content_layout.addWidget(divider())
+
+        # Convert to Markdown button
+        self.convert_md_btn = QPushButton("📄 Convert Selected to Markdown")
+        self.convert_md_btn.setMinimumHeight(30)
+        self.convert_md_btn.setToolTip("Convert selected PDFs to Markdown (required before highlighting)")
+        self.convert_md_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {PALETTE['surface']};
+                border: 1.5px solid {PALETTE['border']};
+                border-radius: 7px;
+                color: {PALETTE['text_secondary']};
+                font-size: 9pt;
+                font-weight: 500;
+                padding: 4px 12px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['accent']};
+                color: {PALETTE['accent']};
+                background: {PALETTE['row_hover']};
+            }}
+        """)
+        self.convert_md_btn.clicked.connect(self._on_convert_markdown)
+        content_layout.addWidget(self.convert_md_btn)
         settings_row.addWidget(content_card, 1)
 
         root_layout.addLayout(settings_row)
@@ -642,7 +674,7 @@ class ProcessingTab(QWidget):
 
         self.adv_settings_card, adv_layout = make_card('h', (14, 12, 14, 12), 20)
 
-        def spin_row(label_text, minimum, maximum, default, tooltip=""):
+        def spin_row(label_text, minimum, maximum, default, step=1, tooltip=""):
             row = QHBoxLayout()
             lbl = QLabel(label_text)
             lbl.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 9pt;")
@@ -651,6 +683,7 @@ class ProcessingTab(QWidget):
             sp.setMinimum(minimum)
             sp.setMaximum(maximum)
             sp.setValue(default)
+            sp.setSingleStep(step)
             sp.setFixedWidth(70)
             sp.setFixedHeight(28)
             if tooltip:
@@ -672,9 +705,15 @@ class ProcessingTab(QWidget):
         pages_col.addLayout(pages_row)
         adv_layout.addLayout(pages_col)
 
+        limit_col = QVBoxLayout()
+        limit_col.addWidget(label_secondary("Highlight Limit"))
+        limit_row, self.highlight_limit_spin = spin_row("Chars", 5000, 100000, 20000, 5000)
+        limit_col.addLayout(limit_row)
+        adv_layout.addLayout(limit_col)
+
         reset_col = QVBoxLayout()
         reset_col.addWidget(label_secondary("Chat Reset After"))
-        reset_row, self.reset_spin = spin_row("Requests", 1, 50, 5, "Reset Gemini chat after N requests")
+        reset_row, self.reset_spin = spin_row("Requests", 1, 50, 5, 1, "Reset Gemini chat after N requests")
         reset_col.addLayout(reset_row)
         adv_layout.addLayout(reset_col)
 
@@ -778,6 +817,12 @@ class ProcessingTab(QWidget):
         self.skip_btn.setEnabled(False)
         self.skip_btn.clicked.connect(self._on_skip)
 
+        self.skip_pdf_btn = QPushButton("Skip PDF")
+        self.skip_pdf_btn.setObjectName("danger")
+        self.skip_pdf_btn.setMinimumHeight(32)
+        self.skip_pdf_btn.setEnabled(False)
+        self.skip_pdf_btn.clicked.connect(self._on_skip_pdf)
+
         # Reviews info badge
         self.reviews_badge = QPushButton("📝 Reviews: —")
         self.reviews_badge.setMinimumHeight(32)
@@ -796,6 +841,7 @@ class ProcessingTab(QWidget):
 
         extract_row.addWidget(self.repeat_btn)
         extract_row.addWidget(self.skip_btn)
+        extract_row.addWidget(self.skip_pdf_btn)
         extract_row.addWidget(self.reviews_badge)
         extract_row.addStretch()
         manual_layout.addLayout(extract_row)
@@ -1156,6 +1202,53 @@ class ProcessingTab(QWidget):
         except Exception as e:
             return None
 
+    # ── Markdown Conversion ─────────────────────────────────────
+
+    def _on_convert_markdown(self):
+        """Handle 'Convert Selected to Markdown' button click."""
+        if not self.filtered_pdfs:
+            QMessageBox.warning(self, "No PDFs", "No PDFs available. Please select a root folder.")
+            return
+
+        selection_str = self.selection_input.text().strip()
+        selected_indexes = self._parse_selection(selection_str, len(self.filtered_pdfs))
+
+        if selected_indexes is None:
+            QMessageBox.warning(self, "Invalid Selection",
+                f"Invalid selection: '{selection_str}'\n\nUse formats like: 1,3,5 or 1-5 or CS01,CS02")
+            return
+
+        selected_pdfs = [self.filtered_pdfs[i - 1] for i in selected_indexes]
+
+        reply = QMessageBox.question(self, "Convert to Markdown?",
+            f"Convert {len(selected_pdfs)} PDF(s) to Markdown?\n\n"
+            "Already converted PDFs will be skipped automatically.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
+        if reply != QMessageBox.Yes:
+            return
+
+        from highlight_processor import MarkdownConvertThread
+
+        self.convert_md_btn.setEnabled(False)
+        self.convert_md_btn.setText("⏳ Converting...")
+
+        self._md_convert_thread = MarkdownConvertThread(selected_pdfs)
+        self._md_convert_thread.log_signal.connect(self.add_log)
+        self._md_convert_thread.progress_signal.connect(
+            lambda cur, tot: self.progress_bar.setValue(int(cur / tot * 100)))
+        self._md_convert_thread.finished_signal.connect(self._on_md_convert_done)
+        self._md_convert_thread.start()
+
+    def _on_md_convert_done(self, success, message):
+        """Callback when markdown conversion thread finishes."""
+        self.convert_md_btn.setEnabled(True)
+        self.convert_md_btn.setText("📄 Convert Selected to Markdown")
+        if success:
+            self.add_log(f"✅ {message}", "success")
+        else:
+            self.add_log(f"❌ {message}", "error")
+
     # ── Log helpers ───────────────────────────────────────────
 
     def add_log(self, message, level="info"):
@@ -1193,7 +1286,9 @@ class ProcessingTab(QWidget):
 
         selected_pdfs = [self.filtered_pdfs[i - 1] for i in selected_indexes]
 
-        if not self.mcq_check.isChecked() and not self.notes_check.isChecked():
+        has_mcq_or_notes = self.mcq_check.isChecked() or self.notes_check.isChecked()
+        has_highlight = self.highlight_check.isChecked()
+        if not has_mcq_or_notes and not has_highlight:
             QMessageBox.warning(self, "No Content Type", "Select at least one content type.")
             return
 
@@ -1219,6 +1314,29 @@ class ProcessingTab(QWidget):
         self.status_status_val.setText("Running")
         self.status_status_val.setStyleSheet(f"color: {PALETTE['accent']}; font-size: 10pt; font-weight: 600;")
 
+        # If Highlighted Handouts is checked, use HighlightProcessingThread
+        if has_highlight and not has_mcq_or_notes:
+            # Only highlighted handouts — use highlight processor
+            from highlight_processor import HighlightProcessingThread
+            self.add_log(f"Starting Highlighted Handouts: {len(selected_pdfs)} PDFs | Sections: {', '.join(selected_sections)}", "info")
+
+            self.processing_thread = HighlightProcessingThread(
+                selected_pdfs,
+                selected_sections,
+                delay_seconds=self.delay_spin.value(),
+                chat_reset_threshold=self.reset_spin.value(),
+            )
+            self.processing_thread.use_reviews_for_highlights = self.highlight_reviews_check.isChecked()
+
+            self.processing_thread.log_signal.connect(self.add_log)
+            self.processing_thread.status_signal.connect(self._update_status)
+            self.processing_thread.current_pdf_signal.connect(self._update_pdf_progress)
+            self.processing_thread.finished_signal.connect(self._processing_done)
+            self.processing_thread.awaiting_input_signal.connect(self._on_awaiting_input)
+            self.processing_thread.start()
+            return
+
+        # MCQ / Short Notes processing (existing flow)
         self.add_log(f"Starting: {len(selected_pdfs)} PDFs | Sections: {', '.join(selected_sections)} | Types: {', '.join(content_types)}", "info")
 
         self.processing_thread = BatchProcessingThread(
@@ -1228,7 +1346,7 @@ class ProcessingTab(QWidget):
             delay_seconds=self.delay_spin.value(),
             pages_per_request=self.pages_spin.value(),
             content_types=content_types,
-            chat_reset_threshold=self.reset_spin.value()
+            chat_reset_threshold=self.reset_spin.value(),
         )
         
         # Set reviews context flags and category
@@ -1292,6 +1410,7 @@ class ProcessingTab(QWidget):
         self.repeat_btn.setEnabled(False)
         self.submit_json_btn.setEnabled(False)
         self.skip_btn.setEnabled(False)
+        self.skip_pdf_btn.setEnabled(False)
         self.batch_info_label.setText("No active batch — start processing first")
         self.batch_info_label.setStyleSheet(f"color: {PALETTE['text_muted']}; font-size: 9pt; font-style: italic;")
         self.add_log("UI reset.", "info")
@@ -1316,6 +1435,7 @@ class ProcessingTab(QWidget):
         self.repeat_btn.setEnabled(False)
         self.submit_json_btn.setEnabled(False)
         self.skip_btn.setEnabled(False)
+        self.skip_pdf_btn.setEnabled(False)
         self.batch_info_label.setText("No active batch")
         self.batch_info_label.setStyleSheet(f"color: {PALETTE['text_muted']}; font-size: 9pt; font-style: italic;")
 
@@ -1338,6 +1458,7 @@ class ProcessingTab(QWidget):
         self.repeat_btn.setEnabled(True)
         self.submit_json_btn.setEnabled(True)
         self.skip_btn.setEnabled(True)
+        self.skip_pdf_btn.setEnabled(True)
         
         # Update reviews badge for current subject
         try:
@@ -1383,6 +1504,7 @@ class ProcessingTab(QWidget):
         self.repeat_btn.setEnabled(True)
         self.submit_json_btn.setEnabled(True)
         self.skip_btn.setEnabled(True)
+        self.skip_pdf_btn.setEnabled(True)
 
     def _on_repeat(self):
         """Repeat the current batch by re-sending the same prompt"""
@@ -1413,6 +1535,19 @@ class ProcessingTab(QWidget):
             self.batch_info_label.setText("Skipping batch...")
             self.batch_info_label.setStyleSheet(f"color: {PALETTE['warning']}; font-size: 9pt;")
 
+    def _on_skip_pdf(self):
+        if not self.processing_thread or not self.processing_thread.isRunning():
+            return
+        reply = QMessageBox.question(self, "Skip PDF?",
+            "Skip this entire PDF? All processed batches for this PDF will be discarded and not saved.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            if hasattr(self.processing_thread, 'skip_current_pdf'):
+                self.processing_thread.skip_current_pdf()
+            self._disable_manual_btns()
+            self.batch_info_label.setText("Skipping PDF...")
+            self.batch_info_label.setStyleSheet(f"color: {PALETTE['error']}; font-size: 9pt;")
+
     def _on_submit_json(self):
         if not self.processing_thread or not self.processing_thread.isRunning():
             return
@@ -1431,6 +1566,7 @@ class ProcessingTab(QWidget):
         self.repeat_btn.setEnabled(False)
         self.submit_json_btn.setEnabled(False)
         self.skip_btn.setEnabled(False)
+        self.skip_pdf_btn.setEnabled(False)
 
     def _load_last_state(self):
         state = self.state_manager.load_state()
@@ -1449,9 +1585,11 @@ class ProcessingTab(QWidget):
         # Advanced settings spinboxes
         delay = cfg.get('delay_seconds', 1)
         pages = cfg.get('pages_per_batch', 10)
+        limit = cfg.get('highlight_batch_char_limit', 20000)
         reset = cfg.get('chat_reset_threshold', 5)
         self.delay_spin.setValue(int(delay))
         self.pages_spin.setValue(int(pages))
+        self.highlight_limit_spin.setValue(int(limit))
         self.reset_spin.setValue(int(reset))
 
         # Reviews checkboxes (defaults to True per Feature 3)
@@ -1461,6 +1599,8 @@ class ProcessingTab(QWidget):
         # Content checkboxes
         self.mcq_check.setChecked(cfg.get('content_mcq', True))
         self.notes_check.setChecked(cfg.get('content_notes', False))
+        self.highlight_check.setChecked(cfg.get('content_highlighted', False))
+        self.highlight_reviews_check.setChecked(cfg.get('reviews_for_highlights', True))
 
         # Section radio buttons
         section = cfg.get('selected_section', 'both')
@@ -1479,6 +1619,7 @@ class ProcessingTab(QWidget):
         """Connect all settings widgets to auto-save on change."""
         self.delay_spin.valueChanged.connect(lambda v: self._write_config_key('delay_seconds', v))
         self.pages_spin.valueChanged.connect(lambda v: self._write_config_key('pages_per_batch', v))
+        self.highlight_limit_spin.valueChanged.connect(lambda v: self._write_config_key('highlight_batch_char_limit', v))
         self.reset_spin.valueChanged.connect(lambda v: self._write_config_key('chat_reset_threshold', v))
         self.mcq_reviews_check.stateChanged.connect(
             lambda s: self._write_config_key('reviews_for_mcqs', bool(s)))
@@ -1488,6 +1629,10 @@ class ProcessingTab(QWidget):
             lambda s: self._write_config_key('content_mcq', bool(s)))
         self.notes_check.stateChanged.connect(
             lambda s: self._write_config_key('content_notes', bool(s)))
+        self.highlight_check.stateChanged.connect(
+            lambda s: self._write_config_key('content_highlighted', bool(s)))
+        self.highlight_reviews_check.stateChanged.connect(
+            lambda s: self._write_config_key('reviews_for_highlights', bool(s)))
         self.mids_radio.toggled.connect(
             lambda checked: self._write_config_key('selected_section', 'mids') if checked else None)
         self.finals_radio.toggled.connect(
@@ -1571,10 +1716,10 @@ class ProcessingTab(QWidget):
         text = self.json_paste.toPlainText().strip()
         if not text:
             return
-        # Only auto-submit if it looks like JSON (starts with [ or {)
-        if not (text.startswith('[') or text.startswith('{') or '```json' in text or '```' in text):
+        # Only auto-submit if it looks like JSON or Markdown
+        if not (text.startswith('[') or text.startswith('{') or '```' in text or '**' in text or text.startswith('#')):
             return
-        self.add_log("⚡ Auto-parsing pasted JSON...", "info")
+        self.add_log("⚡ Auto-parsing pasted content...", "info")
         self._on_submit_json()
 
     def set_auto_parse(self, enabled: bool):
@@ -1667,8 +1812,10 @@ class ProcessingTab(QWidget):
             for sid, st in flagged:
                 mids_info = f"✓ {st['mids_mcqs']} MCQs, {st['mids_notes']} Notes" if st['mids_processed'] else "✗ Not processed"
                 finals_info = f"✓ {st['finals_mcqs']} MCQs, {st['finals_notes']} Notes" if st['finals_processed'] else "✗ Not processed"
+                mids_hl = "✓ Highlighted" if st.get('mids_highlighted') else ""
+                finals_hl = "✓ Highlighted" if st.get('finals_highlighted') else ""
                 tooltip_parts.append(
-                    f"{sid}\n  Mids:   {mids_info}\n  Finals: {finals_info}"
+                    f"{sid}\n  Mids:   {mids_info}{' | ' + mids_hl if mids_hl else ''}\n  Finals: {finals_info}{' | ' + finals_hl if finals_hl else ''}"
                 )
                 warn_ids.append(sid)
 
@@ -1750,6 +1897,10 @@ class ProcessingTab(QWidget):
                 parts.append(f"Mids:{item['mids_mcqs']}MCQs/{item['mids_notes']}Notes")
             if item['finals_processed']:
                 parts.append(f"Finals:{item['finals_mcqs']}MCQs/{item['finals_notes']}Notes")
+            if item.get('mids_highlighted'):
+                parts.append("HL:✓Mids")
+            if item.get('finals_highlighted'):
+                parts.append("HL:✓Finals")
             status_text = "  |  ".join(parts) if parts else "—"
             status_item = QTableWidgetItem(status_text)
             status_item.setForeground(QColor(PALETTE['success']))
@@ -1841,7 +1992,7 @@ class PDFGeneratorTab(QWidget):
         self.json_type_combo = QComboBox()
         self.json_type_combo.setMinimumHeight(32)
         self.json_type_combo.setMinimumWidth(120)
-        self.json_type_combo.addItems(["All Types", "MCQs", "Short Notes"])
+        self.json_type_combo.addItems(["All Types", "MCQs", "Short Notes", "Highlighted Handouts"])
         self.json_type_combo.currentIndexChanged.connect(self._filter_json_list)
         json_search_row.addWidget(self.json_type_combo, 1)
 
@@ -2152,16 +2303,19 @@ class PDFGeneratorTab(QWidget):
             self.gen_pdfs_btn.setText("📄  Generated PDFs  ▼")
 
     def _refresh_generated_pdfs_table(self):
-        """Populate the generated PDFs table grouped by category"""
+        """Populate the generated PDFs table grouped by category (includes highlighted handouts)"""
         converted = [f for f in self.json_files if f.get('has_pdf')]
         converted.sort(key=lambda x: (x['category'], x['name']))
 
         self.gen_pdfs_table.setRowCount(0)
-        for i, item in enumerate(converted, 1):
+        counter = 0
+
+        for item in converted:
+            counter += 1
             row = self.gen_pdfs_table.rowCount()
             self.gen_pdfs_table.insertRow(row)
 
-            idx_item = QTableWidgetItem(str(i))
+            idx_item = QTableWidgetItem(str(counter))
             idx_item.setTextAlignment(Qt.AlignCenter)
             idx_item.setForeground(QColor(PALETTE['text_muted']))
 
@@ -2178,8 +2332,36 @@ class PDFGeneratorTab(QWidget):
             self.gen_pdfs_table.setItem(row, 1, name_item)
             self.gen_pdfs_table.setItem(row, 2, cat_item)
 
+        # Also scan for highlighted handout PDFs
+        try:
+            from folder_organizer import get_pdf_output_root
+            import re as _re
+            pdf_root = Path(get_pdf_output_root())
+            if pdf_root.exists():
+                for hl_pdf in sorted(pdf_root.glob('*_Highlighted-Handout_BY_VUEDU.pdf')):
+                    counter += 1
+                    row = self.gen_pdfs_table.rowCount()
+                    self.gen_pdfs_table.insertRow(row)
+
+                    idx_item = QTableWidgetItem(str(counter))
+                    idx_item.setTextAlignment(Qt.AlignCenter)
+                    idx_item.setForeground(QColor(PALETTE['text_muted']))
+
+                    name_item = QTableWidgetItem(hl_pdf.name)
+                    name_item.setForeground(QColor('#e3b341'))  # Orange-yellow for highlighted
+
+                    cat_item = QTableWidgetItem('Highlighted')
+                    cat_item.setTextAlignment(Qt.AlignCenter)
+                    cat_item.setForeground(QColor('#e3b341'))
+
+                    self.gen_pdfs_table.setItem(row, 0, idx_item)
+                    self.gen_pdfs_table.setItem(row, 1, name_item)
+                    self.gen_pdfs_table.setItem(row, 2, cat_item)
+        except Exception:
+            pass
+
         # Update button text with count
-        self.gen_pdfs_btn.setText(f"📄  Generated PDFs ({len(converted)})  {'▲' if self.gen_pdfs_card.isVisible() else '▼'}")
+        self.gen_pdfs_btn.setText(f"📄  Generated PDFs ({counter})  {'▲' if self.gen_pdfs_card.isVisible() else '▼'}")
 
     def _filter_json_list(self):
         search = self.json_search.text().strip().lower()
@@ -3330,6 +3512,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Gemini MCQ Extractor")
         self.setGeometry(80, 60, 1100, 820)
         self.setMinimumSize(900, 700)
+        
         self._build_ui()
 
     def _build_ui(self):
@@ -3364,7 +3547,7 @@ class MainWindow(QMainWindow):
 
         # Tab buttons
         self._nav_btns = []
-        for i, text in enumerate(["Processing", "PDF Generator", "Reviews", "Edit PDF"]):
+        for i, text in enumerate(["Processing", "PDF Generator", "Reviews", "Edit PDF", "Transcripts"]):
             btn = QPushButton(text)
             btn.setCheckable(True)
             btn.setFixedHeight(52)
@@ -3431,10 +3614,15 @@ class MainWindow(QMainWindow):
         self.reviews_tab = ReviewsTab()
         self.edit_pdf_tab = EditPDFTab()
 
+        # Import and create Transcripts tab
+        from transcripts_tab import TranscriptsTab
+        self.transcripts_tab = TranscriptsTab()
+
         self.stack_layout.addWidget(self.processing_tab)
         self.stack_layout.addWidget(self.pdf_gen_tab)
         self.stack_layout.addWidget(self.reviews_tab)
         self.stack_layout.addWidget(self.edit_pdf_tab)
+        self.stack_layout.addWidget(self.transcripts_tab)
 
         self.scroll_area.setWidget(self.content_stack)
         main_vbox.addWidget(self.scroll_area)
@@ -3447,6 +3635,7 @@ class MainWindow(QMainWindow):
         self.pdf_gen_tab.setVisible(idx == 1)
         self.reviews_tab.setVisible(idx == 2)
         self.edit_pdf_tab.setVisible(idx == 3)
+        self.transcripts_tab.setVisible(idx == 4)
 
         for i, btn in enumerate(self._nav_btns):
             btn.setChecked(i == idx)
